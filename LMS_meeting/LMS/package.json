@@ -1,0 +1,16 @@
+{
+  "name": "lms-monorepo",
+  "version": "1.0.0",
+  "description": "LMS Client application for continuous biometric authentication telemetry collection demo.",
+  "scripts": {
+    "install-backend": "npm install --prefix backend",
+    "install-frontend": "npm install --prefix frontend --legacy-peer-deps",
+    "install-all": "npm run install-backend && npm run install-frontend",
+    "server": "npm run dev --prefix backend",
+    "client": "npm run dev --prefix frontend",
+    "dev": "concurrently \"npm run server\" \"npm run client\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
