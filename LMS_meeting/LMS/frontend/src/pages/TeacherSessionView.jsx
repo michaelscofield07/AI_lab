@@ -145,6 +145,21 @@ export default function TeacherSessionView() {
       setAnomalies(prev => [{ ...data, id: Date.now() }, ...prev]);
     });
 
+    socket.on('screenshot-audit-event', (data) => {
+      setAnomalies(prev => [{
+        id: data.logId || Date.now(),
+        studentId: data.studentId,
+        studentName: data.studentName,
+        reason: `${data.eventType} (${data.outputCode}): ${data.reason}`,
+        score: data.score,
+        combinedRisk: data.combinedRisk,
+        outputCode: data.outputCode,
+        evidenceFrame: data.evidenceFrame,
+        popupTriggered: data.popupTriggered,
+        timestamp: new Date(data.timestamp || Date.now()).toLocaleTimeString(),
+      }, ...prev]);
+    });
+
     socket.on('disconnect', () => {
       if (status !== 'ended') setStatus('error');
     });
@@ -368,11 +383,40 @@ export default function TeacherSessionView() {
               <p className="text-slate-500 text-xs text-center py-6">No anomalies detected yet</p>
             ) : (
               anomalies.map(a => (
-                <div key={a.id} className="p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl">
-                  <p className="text-rose-400 text-xs font-bold">{a.studentName}</p>
-                  <p className="text-slate-300 text-xs mt-0.5">{a.reason}</p>
-                  <p className="text-slate-500 text-[10px] mt-1">
-                    {new Date(a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                <div key={a.id} className={`p-3 rounded-xl border ${
+                  a.outputCode?.startsWith('r') 
+                    ? 'bg-rose-500/10 border-rose-500/30' 
+                    : 'bg-amber-500/10 border-amber-500/30'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <p className="text-white text-xs font-bold">{a.studentName}</p>
+                    {a.outputCode && (
+                      <span className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded-md ${
+                        a.outputCode.startsWith('r')
+                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      }`}>
+                        {a.outputCode}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-slate-300 text-xs mt-1">{a.reason}</p>
+                  
+                  {a.score !== undefined && (
+                    <div className="flex gap-2 text-[10px] text-slate-400 mt-1.5 font-mono">
+                      <span>Diff Score: <strong className="text-white">{a.score}</strong></span>
+                      <span>Combined Risk: <strong className="text-white">{a.combinedRisk}</strong></span>
+                    </div>
+                  )}
+
+                  {a.evidenceFrame && (
+                    <div className="mt-2 rounded-lg overflow-hidden border border-slate-800 bg-slate-950">
+                      <img src={a.evidenceFrame} alt="Evidence Frame" className="w-full h-24 object-cover" />
+                    </div>
+                  )}
+
+                  <p className="text-slate-500 text-[10px] mt-1.5 text-right">
+                    {a.timestamp || new Date().toLocaleTimeString()}
                   </p>
                 </div>
               ))

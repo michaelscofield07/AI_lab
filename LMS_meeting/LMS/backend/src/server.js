@@ -1,9 +1,10 @@
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const http = require('http');
 const { Server } = require('socket.io');
 const connectDB = require('./config/db');
+const AuditLog = require('./models/AuditLog');
 
 // Load environment variables
 dotenv.config();
@@ -142,6 +143,68 @@ io.on('connection', (socket) => {
     const room = sessionRooms[sessionId];
     if (room && room.teacher) {
       io.to(room.teacher).emit('anomaly-alert', data);
+    }
+  });
+
+  // -------------------------------------------------------------------
+  // SCREENSHOT ANALYSIS RESULT — 5s Frame Diff (Y/R threshold)
+  // Payload: { sessionId, studentId, studentName, eventType, score, combinedRisk, outputCode, evidenceFrame, reason, popupTriggered }
+  // -------------------------------------------------------------------
+  socket.on('screenshot-analysis-result', async (data) => {
+    const { sessionId, userId, userName } = socket;
+    const targetSessionId = data.sessionId || sessionId;
+    const studentId = data.studentId || userId;
+    const studentName = data.studentName || userName;
+
+    if (!targetSessionId || !studentId) return;
+
+    try {
+      // Save audit log to DB
+      const auditLog = await AuditLog.create({
+        session: targetSessionId,
+        student: studentId,
+        studentName: studentName || 'Student',
+        eventType: data.eventType || 'SCREENSHOT_CHANGE',
+        score: Number(data.score) || 0,
+        combinedRisk: Number(data.combinedRisk) || 0,
+        outputCode: data.outputCode, // e.g., "y34.2" or "r65.8"
+        evidenceFrame: data.evidenceFrame || null, // compressed image base64
+        reason: data.reason || 'Screen content change detected',
+        popupTriggered: !!data.popupTriggered,
+      });
+
+      console.log(`[Audit Log] ${studentName} - Code: ${data.outputCode} (Score: ${data.score}, Combined: ${data.combinedRisk})`);
+
+      const room = sessionRooms[targetSessionId];
+      if (room && room.teacher) {
+        // Relay audit event to teacher dashboard
+        io.to(room.teacher).emit('screenshot-audit-event', {
+          logId: auditLog._id,
+          studentId,
+          studentName,
+          eventType: auditLog.eventType,
+          score: auditLog.score,
+          combinedRisk: auditLog.combinedRisk,
+          outputCode: auditLog.outputCode,
+          evidenceFrame: auditLog.evidenceFrame,
+          reason: auditLog.reason,
+          popupTriggered: auditLog.popupTriggered,
+          timestamp: auditLog.createdAt,
+        });
+      }
+
+      // If popup condition met (Red + Combined Risk >= POPUP_THRESHOLD), trigger popup on student screen
+      if (data.popupTriggered) {
+        socket.emit('popup-warning', {
+          title: 'Suspicious Visual Activity Detected',
+          message: data.reason || 'Large visual change detected alongside behavioral risk.',
+          outputCode: data.outputCode,
+          score: data.score,
+          combinedRisk: data.combinedRisk,
+        });
+      }
+    } catch (err) {
+      console.error('Error saving screenshot audit log:', err);
     }
   });
 

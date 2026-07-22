@@ -31,4 +31,7 @@ router.route('/:id/join')
 router.route('/:id/status')
   .patch(protect, authorize('teacher', 'admin'), updateSessionStatus);
 
+// Nested audit log routes
+router.use('/:sessionId/audit-logs', require('./auditRoutes'));
+
 module.exports = router;

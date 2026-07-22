@@ -5,8 +5,9 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import {
   Monitor, MonitorOff, LogOut, Users, MessageSquare,
-  X, Send, AlertCircle, Wifi, WifiOff, Clock, Shield
+  X, Send, AlertCircle, Wifi, WifiOff, Clock, Shield, AlertTriangle
 } from 'lucide-react';
+import { analyze5sSlotFrame } from '../utils/screenshotAnalyzer';
 
 const TARGET_FPS = 5; // 5 frames per second — low bandwidth
 const FRAME_INTERVAL = 1000 / TARGET_FPS;
@@ -35,11 +36,16 @@ export default function StudentSessionView() {
   const [chatInput, setChatInput] = useState('');
   const [teacherSocketId, setTeacherSocketId] = useState(null);
 
+  // Popup Warning State
+  const [popupWarning, setPopupWarning] = useState(null);
+  const [behavioralScore, setBehavioralScore] = useState(25.0);
+
   // Refs
   const socketRef = useRef(null);
   const streamRef = useRef(null);
   const canvasRef = useRef(null);
   const captureIntervalRef = useRef(null);
+  const slot5sIntervalRef = useRef(null);
   const chatEndRef = useRef(null);
 
   // --- Load session info from localStorage (set during join) ---
@@ -103,6 +109,10 @@ export default function StudentSessionView() {
       if (!showChat) setShowChat(true);
     });
 
+    socket.on('popup-warning', (data) => {
+      setPopupWarning(data);
+    });
+
     socket.on('session-ended', () => {
       setStatus('ended');
       stopScreenShare();
@@ -154,6 +164,40 @@ export default function StudentSessionView() {
         }
       }, FRAME_INTERVAL);
 
+      // --- 5-Second Slot Screenshot Frame Diff Analysis (Y / R score) ---
+      slot5sIntervalRef.current = setInterval(() => {
+        if (canvasRef.current && socketRef.current?.connected) {
+          const res = analyze5sSlotFrame(canvasRef.current, behavioralScore);
+          if (res && res.outputCode) {
+            console.log(`[5s Frame Diff Result] Code: ${res.outputCode} (Score: ${res.score}, Combined: ${res.combinedRisk})`);
+            socketRef.current.emit('screenshot-analysis-result', {
+              sessionId,
+              studentId: user._id,
+              studentName: user.name,
+              eventType: res.eventType,
+              score: res.score,
+              combinedRisk: res.combinedRisk,
+              outputCode: res.outputCode,
+              evidenceFrame: res.evidenceFrame, // compressed base64 JPEG
+              reason: res.popupTriggered
+                ? 'Large visual change + behavioral flag'
+                : `Noteworthy visual change (${res.outputCode})`,
+              popupTriggered: res.popupTriggered,
+            });
+
+            if (res.popupTriggered) {
+              setPopupWarning({
+                title: 'Visual Anomaly Alert',
+                message: 'Large sudden visual change detected in your exam session alongside behavioral indicators.',
+                outputCode: res.outputCode,
+                score: res.score,
+                combinedRisk: res.combinedRisk,
+              });
+            }
+          }
+        }
+      }, 5000); // Frame taken every 5 seconds as input
+
       // Auto-stop if user cancels share via browser chrome
       stream.getVideoTracks()[0].addEventListener('ended', () => {
         stopScreenShare();
@@ -165,10 +209,11 @@ export default function StudentSessionView() {
       }
       console.error('Screen share error:', err);
     }
-  }, [sessionId]);
+  }, [sessionId, behavioralScore, user]);
 
   const stopScreenShare = useCallback(() => {
     clearInterval(captureIntervalRef.current);
+    clearInterval(slot5sIntervalRef.current);
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
     setIsSharing(false);
@@ -287,6 +332,42 @@ export default function StudentSessionView() {
 
       {/* Main area */}
       <div className="flex-1 flex items-center justify-center relative">
+
+        {/* Anomaly Popup Warning Modal */}
+        {popupWarning && (
+          <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center z-50">
+            <div className="bg-slate-900 rounded-2xl border border-rose-500/40 p-8 max-w-md text-center space-y-4 shadow-2xl animate-in fade-in zoom-in duration-200">
+              <div className="w-16 h-16 rounded-full bg-rose-500/20 border border-rose-500/30 flex items-center justify-center mx-auto text-rose-400">
+                <AlertTriangle size={36} />
+              </div>
+              <div className="space-y-1">
+                <span className="inline-block px-3 py-1 bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-mono font-bold rounded-full">
+                  CODE: {popupWarning.outputCode}
+                </span>
+                <h2 className="text-xl font-bold text-white mt-2">{popupWarning.title}</h2>
+              </div>
+              <p className="text-slate-300 text-sm leading-relaxed">
+                {popupWarning.message}
+              </p>
+              <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 text-xs text-slate-400 flex justify-around">
+                <div>
+                  <span className="block text-slate-500 text-[10px] uppercase">Diff Score</span>
+                  <span className="text-amber-400 font-mono font-bold">{popupWarning.score}</span>
+                </div>
+                <div>
+                  <span className="block text-slate-500 text-[10px] uppercase">Combined Risk</span>
+                  <span className="text-rose-400 font-mono font-bold">{popupWarning.combinedRisk}</span>
+                </div>
+              </div>
+              <button
+                onClick={() => setPopupWarning(null)}
+                className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl transition-colors text-sm shadow-lg shadow-rose-900/30"
+              >
+                Acknowledge & Continue
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Screen share warning banner */}
         {screenWarning && (
