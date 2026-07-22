@@ -118,6 +118,23 @@ io.on('connection', (socket) => {
   });
 
   // -------------------------------------------------------------------
+  // BEHAVIORAL STATUS (telemetry) — student → teacher only
+  // Payload: { status: 'green' | 'yellow' | 'red' | 'gray' }
+  // -------------------------------------------------------------------
+  socket.on('behavioral-status', (payload) => {
+    const { sessionId, userId } = socket;
+    if (!sessionId) return;
+
+    const room = sessionRooms[sessionId];
+    if (room && room.teacher) {
+      io.to(room.teacher).emit('student-behavioral-status', {
+        studentId: userId,
+        status: payload.status,
+      });
+    }
+  });
+
+  // -------------------------------------------------------------------
   // CHAT MESSAGE — private teacher ↔ student
   // Payload: { sessionId, toUserId, toSocketId, message, senderName }
   // -------------------------------------------------------------------
@@ -179,8 +196,7 @@ io.on('connection', (socket) => {
   });
 });
 
-const PORT = process.env.PORT || 5000;
-
+const PORT = 5001;
 httpServer.listen(PORT, () => {
   console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
 });

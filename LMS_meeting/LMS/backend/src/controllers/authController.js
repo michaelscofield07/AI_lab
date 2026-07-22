@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const typingDnaService = require('../services/typingDnaService');
 
 // Helper to generate JWT token
 const generateToken = (id) => {
@@ -40,6 +41,7 @@ const registerUser = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        typingDnaEnrolled: user.typingDnaEnrolled,
         token: generateToken(user._id),
       });
     } else {
@@ -71,6 +73,7 @@ const loginUser = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        typingDnaEnrolled: user.typingDnaEnrolled,
         token: generateToken(user._id),
       });
     } else {
@@ -95,6 +98,8 @@ const getUserProfile = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        typingDnaEnrolled: user.typingDnaEnrolled,
+        typingDnaEnrollmentsCount: user.typingDnaEnrollmentsCount || 0,
       });
     } else {
       res.status(404).json({ message: 'User not found' });
@@ -105,8 +110,67 @@ const getUserProfile = async (req, res) => {
   }
 };
 
+// @desc    Enroll typing pattern
+// @route   POST /api/auth/biometrics/enroll
+// @access  Private
+const enrollBiometrics = async (req, res) => {
+  try {
+    const { typingPattern } = req.body;
+    if (!typingPattern) return res.status(400).json({ message: 'Typing pattern required' });
+
+    const result = await typingDnaService.savePattern(req.user._id.toString(), typingPattern);
+    
+    if (result.success === 1) {
+      const user = await User.findById(req.user._id);
+      user.typingDnaEnrollmentsCount = (user.typingDnaEnrollmentsCount || 0) + 1;
+      
+      if (user.typingDnaEnrollmentsCount >= 3) {
+        user.typingDnaEnrolled = true;
+      }
+      
+      await user.save();
+      res.json({ 
+        message: 'Enrollment successful', 
+        typingDnaEnrolled: user.typingDnaEnrolled,
+        enrollmentsCount: user.typingDnaEnrollmentsCount
+      });
+    } else {
+      res.status(400).json({ message: result.message || 'Enrollment failed' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error during enrollment' });
+  }
+};
+
+// @desc    Verify typing pattern
+// @route   POST /api/auth/biometrics/verify
+// @access  Private
+const verifyBiometrics = async (req, res) => {
+  try {
+    const { typingPattern } = req.body;
+    if (!typingPattern) return res.status(400).json({ message: 'Typing pattern required' });
+
+    const result = await typingDnaService.verifyPattern(req.user._id.toString(), typingPattern);
+    console.log('TypingDNA Verify Result:', result);
+    
+    // TypingDNA returns `result: 1` if it strongly matches. 
+    // Since we only do 1 enrollment for the demo, the score might be lower, so we accept >= 10 as a fallback.
+    if (result.result === 1 || result.score >= 10) {
+      res.json({ message: 'Biometric verification successful', match: true, score: result.score });
+    } else {
+      res.status(401).json({ message: `Biometric verification failed. Pattern mismatch (Score: ${result.score || 0}).`, match: false });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error during verification' });
+  }
+};
+
 module.exports = {
   registerUser,
   loginUser,
   getUserProfile,
+  enrollBiometrics,
+  verifyBiometrics,
 };

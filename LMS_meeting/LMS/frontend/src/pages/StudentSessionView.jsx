@@ -21,6 +21,14 @@ export default function StudentSessionView() {
   const [status, setStatus] = useState('connecting'); // connecting | joined | ended | error
   const [errorMsg, setErrorMsg] = useState('');
 
+  // Biometric gatekeeper state
+  const [verified, setVerified] = useState(false);
+  const [verifyLoading, setVerifyLoading] = useState(false);
+  const [verifyText, setVerifyText] = useState('');
+  const [verifyError, setVerifyError] = useState('');
+  const tdnaRef = useRef(null);
+  const VERIFY_PHRASE = "I agree to academic integrity rules.";
+
   // Screen sharing state
   const [isSharing, setIsSharing] = useState(false);
   const [screenWarning, setScreenWarning] = useState(false);
@@ -52,8 +60,48 @@ export default function StudentSessionView() {
     }
     const info = JSON.parse(stored);
     setSessionInfo(info);
-    connectSocket(info);
+    
+    // Initialize TypingDNA for gatekeeper
+    if (window.TypingDNA) {
+      tdnaRef.current = new window.TypingDNA();
+      tdnaRef.current.addTarget('verify-input');
+    }
   }, [sessionId]);
+
+  // Connect socket ONLY AFTER verification
+  useEffect(() => {
+    if (verified && sessionInfo) {
+      connectSocket(sessionInfo);
+    }
+  }, [verified, sessionInfo]);
+
+  const handleVerify = async () => {
+    if (verifyText !== VERIFY_PHRASE) {
+      setVerifyError('Please type the phrase exactly as shown.');
+      return;
+    }
+    if (!tdnaRef.current) {
+      setVerifyError('Biometric engine loading...');
+      return;
+    }
+
+    setVerifyLoading(true);
+    setVerifyError('');
+
+    try {
+      const pattern = tdnaRef.current.getTypingPattern({ type: 1, text: VERIFY_PHRASE });
+      const res = await axios.post('/api/auth/biometrics/verify', { typingPattern: pattern });
+      
+      // Verification successful
+      setVerified(true);
+    } catch (err) {
+      setVerifyError(err.response?.data?.message || 'Biometric verification failed.');
+      setVerifyText('');
+      tdnaRef.current.reset();
+    } finally {
+      setVerifyLoading(false);
+    }
+  };
 
   // Scroll chat to bottom on new message
   useEffect(() => {
@@ -113,6 +161,82 @@ export default function StudentSessionView() {
       if (status !== 'ended') setStatus('error');
     });
   };
+
+  // --- Behavioral Biometrics Telemetry Engine ---
+  useEffect(() => {
+    if (status !== 'joined' || !socketRef.current) return;
+
+    let lastKeyTime = Date.now();
+    let keystrokeCount = 0;
+    let hasPasted = false;
+    let isFocused = true;
+    
+    const handleKeyDown = (e) => {
+      lastKeyTime = Date.now();
+      keystrokeCount++;
+    };
+
+    const handlePaste = (e) => {
+      hasPasted = true;
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('behavioral-status', { status: 'red' });
+      }
+    };
+
+    const handleFocus = () => {
+      isFocused = true;
+      lastKeyTime = Date.now(); // Instantly reset idle timer
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('behavioral-status', { status: 'green' });
+      }
+    };
+
+    const handleBlur = () => {
+      isFocused = false;
+      if (socketRef.current?.connected) {
+        // Instantly mark as away/paused when they click on another app
+        socketRef.current.emit('behavioral-status', { status: 'yellow' });
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('paste', handlePaste);
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
+
+    const telemetryInterval = setInterval(() => {
+      const now = Date.now();
+      const idleTimeSeconds = (now - lastKeyTime) / 1000;
+      
+      let currentStatus = 'green';
+
+      if (hasPasted || keystrokeCount > 80) {
+        currentStatus = 'red'; // Unusually high burst or paste detected
+        hasPasted = false;     // Reset the paste flag for the next interval
+      } else if (idleTimeSeconds > 60) {
+        currentStatus = 'gray'; // Idle for 1 min (whether focused or not)
+      } else if (!isFocused) {
+        currentStatus = 'yellow'; // Away / Working in another app
+      } else if (idleTimeSeconds > 15 && idleTimeSeconds <= 60) {
+        currentStatus = 'yellow'; // Paused / Thinking in LMS
+      }
+
+      // Reset count for next interval window (evaluated every 3 seconds)
+      keystrokeCount = 0;
+
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('behavioral-status', { status: currentStatus });
+      }
+    }, 3000);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('paste', handlePaste);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
+      clearInterval(telemetryInterval);
+    };
+  }, [status]);
 
   // --- Screen capture: getDisplayMedia → canvas → binary blob → socket ---
   const startScreenShare = useCallback(async () => {
@@ -228,6 +352,57 @@ export default function StudentSessionView() {
   };
 
   // --- Render helpers ---
+  if (!verified && status !== 'error' && status !== 'ended') {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-4">
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-indigo-200 dark:border-indigo-900 shadow-xl max-w-md w-full p-8 space-y-6 text-center">
+          <div className="w-16 h-16 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 mx-auto rounded-full flex items-center justify-center">
+            <Shield size={32} />
+          </div>
+          <div>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white">Identity Verification</h2>
+            <p className="text-slate-500 text-sm mt-2">Type the phrase below to verify your identity and enter the session.</p>
+          </div>
+
+          <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
+            <p className="font-mono text-slate-700 dark:text-slate-300 font-bold select-none">{VERIFY_PHRASE}</p>
+          </div>
+
+          <div className="text-left space-y-2">
+            <input
+              id="verify-input"
+              type="text"
+              value={verifyText}
+              onChange={(e) => {
+                setVerifyText(e.target.value);
+                setVerifyError('');
+              }}
+              onPaste={(e) => e.preventDefault()}
+              disabled={verifyLoading}
+              className="w-full bg-white dark:bg-slate-950 border-2 border-indigo-100 dark:border-indigo-900 focus:border-indigo-500 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:outline-none font-mono"
+              placeholder="Type phrase here..."
+            />
+          </div>
+
+          {verifyError && (
+            <div className="flex items-center gap-2 text-rose-500 text-sm bg-rose-50 dark:bg-rose-950/30 px-4 py-2 rounded-lg text-left">
+              <AlertCircle size={16} className="shrink-0" />
+              {verifyError}
+            </div>
+          )}
+
+          <button
+            onClick={handleVerify}
+            disabled={verifyLoading || verifyText.length < VERIFY_PHRASE.length}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-all flex justify-center items-center gap-2"
+          >
+            {verifyLoading ? 'Verifying...' : 'Enter Session'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (status === 'error') {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">

@@ -176,10 +176,12 @@ const joinSession = async (req, res) => {
       return res.status(400).json({ message: 'This session has already ended' });
     }
 
-    // Check student is enrolled
-    const isEnrolled = session.enrolledStudents.some(
-      s => s._id.toString() === req.user._id.toString()
+    // Check student is currently enrolled in the course
+    const courseObj = await Course.findById(session.course._id || session.course);
+    const isEnrolled = courseObj && courseObj.studentsEnrolled.some(
+      id => id.toString() === req.user._id.toString()
     );
+    
     if (!isEnrolled) {
       return res.status(403).json({ message: 'You are not enrolled in the course for this session' });
     }

@@ -27,6 +27,8 @@ export default function TeacherSessionView() {
   // Students and their frames
   // Map: studentId → { name, imageUrl }
   const [studentFrames, setStudentFrames] = useState({});
+  // Map: studentId → status ('green' | 'yellow' | 'red' | 'gray')
+  const [studentStatuses, setStudentStatuses] = useState({});
   const [participants, setParticipants] = useState([]);
 
   // Panels
@@ -109,6 +111,13 @@ export default function TeacherSessionView() {
       setStudentFrames(prev => ({
         ...prev,
         [studentId]: { name: studentName, imageUrl: url },
+      }));
+    });
+
+    socket.on('student-behavioral-status', ({ studentId, status }) => {
+      setStudentStatuses(prev => ({
+        ...prev,
+        [studentId]: status,
       }));
     });
 
@@ -306,8 +315,21 @@ export default function TeacherSessionView() {
                   <div className="absolute bottom-1.5 left-1.5 bg-slate-950/80 backdrop-blur text-white text-[10px] font-semibold px-1.5 py-0.5 rounded-md">
                     {name}
                   </div>
-                  {/* Live indicator */}
-                  <div className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400 shadow-emerald-400/50 shadow-sm" />
+                  {/* Behavioral Biometrics indicator */}
+                  {(() => {
+                    const bStatus = studentStatuses[studentId] || 'gray';
+                    let bgColor = 'bg-slate-500 shadow-slate-500/50';
+                    if (bStatus === 'green') bgColor = 'bg-emerald-400 shadow-emerald-400/50';
+                    if (bStatus === 'yellow') bgColor = 'bg-amber-400 shadow-amber-400/50';
+                    if (bStatus === 'red') bgColor = 'bg-rose-500 shadow-rose-500/50';
+                    
+                    return (
+                      <div 
+                        className={`absolute top-1.5 left-1.5 w-2.5 h-2.5 rounded-full ${bgColor} shadow-sm z-10 transition-colors duration-300`} 
+                        title={`Behavioral Status: ${bStatus.toUpperCase()}`}
+                      />
+                    );
+                  })()}
                   {/* Chat overlay on hover */}
                   <div className="absolute inset-0 bg-violet-600/0 group-hover:bg-violet-600/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
                     <MessageSquare size={20} className="text-white" />

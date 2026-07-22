@@ -27,6 +27,7 @@ import {
   Tooltip,
   ResponsiveContainer
 } from 'recharts';
+import TypingEnrollment from '../Biometrics/TypingEnrollment';
 
 const StudentDashboard = () => {
   const { user } = useAuth();
@@ -43,6 +44,7 @@ const StudentDashboard = () => {
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
+  const [needsEnrollment, setNeedsEnrollment] = useState(!user?.typingDnaEnrolled);
 
   // Sessions state
   const [liveSessions, setLiveSessions] = useState([]);
@@ -217,6 +219,12 @@ const StudentDashboard = () => {
       {message && (
         <div className="p-4 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/40 rounded-xl text-emerald-600 dark:text-emerald-400 text-sm">
           {message}
+        </div>
+      )}
+
+      {needsEnrollment && (
+        <div className="mb-8">
+          <TypingEnrollment onComplete={() => setNeedsEnrollment(false)} />
         </div>
       )}
 
