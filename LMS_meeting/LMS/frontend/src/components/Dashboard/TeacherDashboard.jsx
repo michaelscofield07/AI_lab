@@ -38,8 +38,7 @@ const TeacherDashboard = () => {
   const [sessionCourseId, setSessionCourseId] = useState('');
   const [sessionDuration, setSessionDuration] = useState(60);
   const [sessionPassword, setSessionPassword] = useState('');
-  const [sessionBlacklistedApps, setSessionBlacklistedApps] = useState('chrome, discord, vscode');
-  const [sessionBlacklistedKeywords, setSessionBlacklistedKeywords] = useState('chatgpt, stackoverflow, solution');
+  const [sessionMaxViolations, setSessionMaxViolations] = useState(5);
   const [sessionBehavioral, setSessionBehavioral] = useState(true);
   const [copiedId, setCopiedId] = useState(null);
   const navigate = useNavigate();
@@ -269,8 +268,7 @@ const TeacherDashboard = () => {
         course: sessionCourseId,
         durationMinutes: sessionDuration,
         sessionPassword: sessionPassword,
-        blacklistedApps: sessionBlacklistedApps,
-        blacklistedKeywords: sessionBlacklistedKeywords,
+        maxViolations: sessionMaxViolations,
         behavioralMonitoring: sessionBehavioral,
       });
       setMessage('Monitoring session created successfully!');
@@ -654,28 +652,6 @@ const TeacherDashboard = () => {
                     </div>
                   </div>
 
-                  {/* Blacklists */}
-                  {(s.blacklistedApps?.length > 0 || s.blacklistedKeywords?.length > 0) && (
-                    <div className="space-y-1.5">
-                      {s.blacklistedApps?.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Apps:</span>
-                          {s.blacklistedApps.map((app, i) => (
-                            <span key={i} className="px-1.5 py-0.5 bg-rose-50 dark:bg-rose-950/20 text-rose-600 dark:text-rose-400 rounded text-[10px] font-semibold">{app}</span>
-                          ))}
-                        </div>
-                      )}
-                      {s.blacklistedKeywords?.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mr-1">Keywords:</span>
-                          {s.blacklistedKeywords.map((kw, i) => (
-                            <span key={i} className="px-1.5 py-0.5 bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 rounded text-[10px] font-semibold">{kw}</span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
                   {/* Footer actions */}
                   <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
                     {/* Copy Session ID */}
@@ -746,7 +722,7 @@ const TeacherDashboard = () => {
                   value={courseTitle}
                   onChange={(e) => setCourseTitle(e.target.value)}
                   placeholder="Introduction to Programming"
-                  className="w-full bg-slate-50 dark:bg-slate-850 border border-slate-250 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 dark:text-white"
+                  className="w-full bg-slate-50 dark:bg-slate-850 border border-slate-250 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
                 />
               </div>
               <div className="space-y-1">
@@ -757,7 +733,7 @@ const TeacherDashboard = () => {
                   value={courseDesc}
                   onChange={(e) => setCourseDesc(e.target.value)}
                   placeholder="Provide an overview of the curriculum and learning goals..."
-                  className="w-full bg-slate-50 dark:bg-slate-850 border border-slate-250 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 dark:text-white"
+                  className="w-full bg-slate-50 dark:bg-slate-850 border border-slate-250 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
                 />
               </div>
               <div className="flex justify-end gap-3 pt-2">
@@ -1139,49 +1115,17 @@ const TeacherDashboard = () => {
                 />
               </div>
 
-              {/* Blacklisted Apps */}
+              {/* Max Violations */}
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Blacklisted Apps <span className="font-normal normal-case text-slate-300">(comma-separated)</span></label>
+                <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Max Allowed Violations</label>
                 <input
-                  type="text"
-                  value={sessionBlacklistedApps}
-                  onChange={(e) => setSessionBlacklistedApps(e.target.value)}
-                  placeholder="chrome, discord, vscode"
-                  className="w-full bg-slate-50 dark:bg-slate-850 border border-slate-250 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={sessionMaxViolations}
+                  onChange={(e) => setSessionMaxViolations(Number(e.target.value))}
+                  className="w-full bg-slate-50 dark:bg-slate-850 border border-slate-250 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
                 />
-                <p className="text-[10px] text-slate-400">SentryClass will flag any student whose active window title contains these words.</p>
-              </div>
-
-              {/* Blacklisted Keywords */}
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Blacklisted OCR Keywords <span className="font-normal normal-case text-slate-300">(comma-separated)</span></label>
-                <input
-                  type="text"
-                  value={sessionBlacklistedKeywords}
-                  onChange={(e) => setSessionBlacklistedKeywords(e.target.value)}
-                  placeholder="chatgpt, stackoverflow, solution"
-                  className="w-full bg-slate-50 dark:bg-slate-850 border border-slate-250 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
-                />
-                <p className="text-[10px] text-slate-400">SentryClass OCR scanner will alert if these words appear on any student screen.</p>
-              </div>
-
-              {/* Behavioral Monitoring Toggle */}
-              <div className="flex items-center justify-between p-3 bg-violet-50 dark:bg-violet-950/20 rounded-xl border border-violet-100 dark:border-violet-900/30">
-                <div>
-                  <p className="text-sm font-bold text-violet-700 dark:text-violet-300">Behavioral Biometrics Monitoring</p>
-                  <p className="text-xs text-violet-500 dark:text-violet-400 mt-0.5">On-device Isolation Forest detects identity substitution</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSessionBehavioral(!sessionBehavioral)}
-                  className={`relative w-11 h-6 rounded-full transition-colors focus:outline-none ${
-                    sessionBehavioral ? 'bg-violet-600' : 'bg-slate-300 dark:bg-slate-700'
-                  }`}
-                >
-                  <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
-                    sessionBehavioral ? 'translate-x-5' : 'translate-x-0'
-                  }`} />
-                </button>
               </div>
 
               {/* Auto-enrolled students hint */}

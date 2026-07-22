@@ -27,17 +27,14 @@ const Sidebar = () => {
 
     const studentLinks = [
       { path: '/dashboard', name: 'Dashboard', icon: LayoutDashboard },
-      { path: '/courses', name: 'Explore Courses', icon: BookOpen },
     ];
 
     const teacherLinks = [
       { path: '/dashboard', name: 'Teacher Panel', icon: LayoutDashboard },
-      { path: '/courses', name: 'My Courses', icon: BookOpen },
     ];
 
     const adminLinks = [
       { path: '/dashboard', name: 'Admin Control', icon: LayoutDashboard },
-      { path: '/courses', name: 'Manage Courses', icon: BookOpen },
     ];
 
     let roleLinks = [];

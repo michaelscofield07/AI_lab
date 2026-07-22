@@ -334,6 +334,38 @@ const StudentDashboard = () => {
             </div>
           )}
         </div>
+
+        {/* Available Courses */}
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+          <h3 className="text-lg font-bold text-slate-900 dark:text-white">Available Courses</h3>
+          {availableCourses.length === 0 ? (
+            <div className="text-center py-4">
+              <p className="text-slate-400 text-sm">No new courses available right now.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {availableCourses.map(c => (
+                <div 
+                  key={c._id} 
+                  className="flex items-center justify-between p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 hover:border-brand-500 hover:bg-brand-50/10 dark:hover:bg-brand-950/10 transition-all group"
+                >
+                  <div>
+                    <h4 className="font-semibold text-sm text-slate-800 dark:text-slate-200 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">
+                      {c.title}
+                    </h4>
+                    <p className="text-xs text-slate-400 mt-0.5">Taught by {c.teacher?.name}</p>
+                  </div>
+                  <button 
+                    onClick={() => handleEnroll(c._id)}
+                    className="flex-shrink-0 px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-lg transition-colors"
+                  >
+                    Enroll
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Live Sessions Section */}
