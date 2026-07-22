@@ -55,7 +55,32 @@ const createAuditLog = async (req, res) => {
   }
 };
 
+// @desc    Get all audit logs for a specific student across sessions
+// @route   GET /api/sessions/user/:studentId/audit-logs
+// @access  Private (Teacher, Admin, or the Student themselves)
+const getStudentAuditLogs = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+
+    // Students can only view their own logs unless teacher/admin
+    if (req.user.role === 'student' && req.user._id.toString() !== studentId) {
+      return res.status(403).json({ message: 'Not authorized to view these audit logs' });
+    }
+
+    const logs = await AuditLog.find({ student: studentId })
+      .populate('session', 'title course')
+      .sort({ createdAt: -1 });
+
+    res.json(logs);
+  } catch (error) {
+    console.error('Error fetching student audit logs:', error);
+    res.status(500).json({ message: 'Server error fetching student audit logs' });
+  }
+};
+
 module.exports = {
   getSessionAuditLogs,
   createAuditLog,
+  getStudentAuditLogs,
 };
+

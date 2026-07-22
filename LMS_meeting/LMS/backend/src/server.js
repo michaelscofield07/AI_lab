@@ -137,13 +137,96 @@ io.on('connection', (socket) => {
   // ANOMALY EVENT — SentryClass agent or server-side rule triggers
   // Payload: { sessionId, studentId, studentName, reason, timestamp }
   // -------------------------------------------------------------------
-  socket.on('anomaly-event', (data) => {
-    const { sessionId } = socket;
-    if (!sessionId) return;
-    const room = sessionRooms[sessionId];
-    if (room && room.teacher) {
-      io.to(room.teacher).emit('anomaly-alert', data);
+  // -------------------------------------------------------------------
+  // ANOMALY EVENT — Continuous Behavioral Telemetry (Paste, Focus, Idle)
+  // Payload: { sessionId, studentId, studentName, eventType, score, level, reason, evidenceFrame }
+  // -------------------------------------------------------------------
+  socket.on('anomaly-event', async (data) => {
+    const { sessionId, userId, userName } = socket;
+    const targetSessionId = data.sessionId || sessionId;
+    const studentId = data.studentId || userId;
+    const studentName = data.studentName || userName;
+
+    if (!targetSessionId || !studentId) return;
+
+    try {
+      const isRed = data.level === 'red' || data.isRed;
+      const outputCode = isRed ? `r${data.score || 75}` : `y${data.score || 35}`;
+
+      // Save behavioral log to DB for this specific student & session
+      const auditLog = await AuditLog.create({
+        session: targetSessionId,
+        student: studentId,
+        studentName: studentName || 'Student',
+        eventType: data.eventType || 'BEHAVIORAL_ANOMALY',
+        score: Number(data.score) || (isRed ? 75 : 35),
+        combinedRisk: Number(data.combinedRisk) || (isRed ? 75 : 35),
+        outputCode,
+        evidenceFrame: isRed ? (data.evidenceFrame || null) : null, // 480p JPEG screenshot snapshot on Red
+        reason: data.reason || (isRed ? 'High Behavioral Anomaly' : 'Behavioral Alert'),
+        popupTriggered: isRed,
+      });
+
+      console.log(`[Behavior Log] ${studentName} - ${outputCode}: ${data.reason}`);
+
+      const room = sessionRooms[targetSessionId];
+      if (room && room.teacher) {
+        // Relay audit event to teacher dashboard
+        io.to(room.teacher).emit('screenshot-audit-event', {
+          logId: auditLog._id,
+          studentId,
+          studentName,
+          eventType: auditLog.eventType,
+          score: auditLog.score,
+          combinedRisk: auditLog.combinedRisk,
+          outputCode: auditLog.outputCode,
+          evidenceFrame: auditLog.evidenceFrame,
+          reason: auditLog.reason,
+          popupTriggered: isRed,
+          timestamp: auditLog.createdAt,
+        });
+
+        // Trigger Red Popup alert to Teacher ONLY
+        if (isRed) {
+          io.to(room.teacher).emit('teacher-red-popup', {
+            logId: auditLog._id,
+            studentId,
+            studentName,
+            title: `Red Alert: ${data.reason || 'Behavioral Anomaly'}`,
+            message: `Student ${studentName} triggered a high-severity anomaly (${outputCode}).`,
+            outputCode: auditLog.outputCode,
+            score: auditLog.score,
+            evidenceFrame: auditLog.evidenceFrame,
+            timestamp: auditLog.createdAt,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Error saving behavioral audit log:', err);
     }
+  });
+
+  // -------------------------------------------------------------------
+  // QUIZ SUBMITTED — Student finished assessment, relay results to teacher
+  // Payload: { sessionId, studentId, studentName, quizId, percentage, score, totalMarks, chooseAnswers }
+  // -------------------------------------------------------------------
+  socket.on('quiz-submitted', (data) => {
+    const { sessionId: sid, userId, userName } = socket;
+    const targetSessionId = data.sessionId || sid;
+    const room = sessionRooms[targetSessionId];
+    if (room && room.teacher) {
+      io.to(room.teacher).emit('student-quiz-submitted', {
+        studentId: data.studentId || userId,
+        studentName: data.studentName || userName,
+        quizId: data.quizId,
+        percentage: data.percentage,
+        score: data.score,
+        totalMarks: data.totalMarks,
+        chooseAnswers: data.chooseAnswers || [],
+        timestamp: new Date().toISOString(),
+      });
+    }
+    console.log(`[Quiz Submitted] ${data.studentName || userName} scored ${data.percentage}%`);
   });
 
   // -------------------------------------------------------------------
@@ -159,7 +242,7 @@ io.on('connection', (socket) => {
     if (!targetSessionId || !studentId) return;
 
     try {
-      // Save audit log to DB
+      // Save audit log to DB for this specific student & session
       const auditLog = await AuditLog.create({
         session: targetSessionId,
         student: studentId,
@@ -173,7 +256,7 @@ io.on('connection', (socket) => {
         popupTriggered: !!data.popupTriggered,
       });
 
-      console.log(`[Audit Log] ${studentName} - Code: ${data.outputCode} (Score: ${data.score}, Combined: ${data.combinedRisk})`);
+      console.log(`[Audit Log] ${studentName} - Code: ${data.outputCode} (Score: ${data.score})`);
 
       const room = sessionRooms[targetSessionId];
       if (room && room.teacher) {
@@ -191,17 +274,22 @@ io.on('connection', (socket) => {
           popupTriggered: auditLog.popupTriggered,
           timestamp: auditLog.createdAt,
         });
-      }
 
-      // If popup condition met (Red + Combined Risk >= POPUP_THRESHOLD), trigger popup on student screen
-      if (data.popupTriggered) {
-        socket.emit('popup-warning', {
-          title: 'Suspicious Visual Activity Detected',
-          message: data.reason || 'Large visual change detected alongside behavioral risk.',
-          outputCode: data.outputCode,
-          score: data.score,
-          combinedRisk: data.combinedRisk,
-        });
+        // Trigger Red Popup alert to Teacher ONLY if popup condition met (Red anomaly r>=60)
+        if (data.popupTriggered) {
+          io.to(room.teacher).emit('teacher-red-popup', {
+            logId: auditLog._id,
+            studentId,
+            studentName,
+            title: `Visual Anomaly Alert: ${studentName}`,
+            message: `Large visual change detected (${data.outputCode}) on ${studentName}'s screen.`,
+            outputCode: data.outputCode,
+            score: data.score,
+            combinedRisk: data.combinedRisk,
+            evidenceFrame: auditLog.evidenceFrame,
+            timestamp: auditLog.createdAt,
+          });
+        }
       }
     } catch (err) {
       console.error('Error saving screenshot audit log:', err);

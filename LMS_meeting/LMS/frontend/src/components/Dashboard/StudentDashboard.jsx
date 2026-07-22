@@ -62,10 +62,10 @@ const StudentDashboard = () => {
 
       // Filter enrolled vs available
       const enrolled = allCourses.filter(c => 
-        c.studentsEnrolled?.includes(user._id)
+        c.studentsEnrolled?.some(s => (s._id || s).toString() === user._id.toString())
       );
       const available = allCourses.filter(c => 
-        !c.studentsEnrolled?.includes(user._id)
+        !c.studentsEnrolled?.some(s => (s._id || s).toString() === user._id.toString())
       );
 
       setEnrolledCourses(enrolled);

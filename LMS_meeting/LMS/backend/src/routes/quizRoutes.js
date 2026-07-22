@@ -17,6 +17,9 @@ router.route('/:id')
 router.route('/:id/submit')
   .post(protect, authorize('student'), submitQuiz);
 
+router.route('/:id/grade')
+  .post(protect, authorize('student'), submitQuiz);
+
 router.route('/:id/results')
   .get(protect, getQuizResults);
 

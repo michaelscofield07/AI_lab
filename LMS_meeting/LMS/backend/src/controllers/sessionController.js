@@ -15,6 +15,8 @@ const createSession = async (req, res) => {
       blacklistedApps,
       blacklistedKeywords,
       behavioralMonitoring,
+      quiz,
+      assignment,
     } = req.body;
 
     if (!title || !course) {
@@ -60,11 +62,15 @@ const createSession = async (req, res) => {
       blacklistedApps: appsArray,
       blacklistedKeywords: keywordsArray,
       behavioralMonitoring: behavioralMonitoring !== undefined ? behavioralMonitoring : true,
+      quiz: quiz || null,
+      assignment: assignment || null,
       status: 'pending',
     });
 
     const populated = await MonitoringSession.findById(session._id)
       .populate('course', 'title')
+      .populate('quiz')
+      .populate('assignment')
       .populate('enrolledStudents', 'name email');
 
     // Strip hashed password from response
@@ -85,6 +91,8 @@ const getSessions = async (req, res) => {
   try {
     const sessions = await MonitoringSession.find({ teacher: req.user._id })
       .populate('course', 'title')
+      .populate('quiz', 'title questions')
+      .populate('assignment', 'title language')
       .populate('enrolledStudents', 'name email')
       .sort({ createdAt: -1 });
 
@@ -118,6 +126,8 @@ const getStudentSessions = async (req, res) => {
     })
       .populate('course', 'title')
       .populate('teacher', 'name email')
+      .populate('quiz')
+      .populate('assignment')
       .select('-sessionPassword -blacklistedApps -blacklistedKeywords')
       .sort({ createdAt: -1 });
 
@@ -136,6 +146,8 @@ const getSessionById = async (req, res) => {
     const session = await MonitoringSession.findById(req.params.id)
       .populate('course', 'title description')
       .populate('enrolledStudents', 'name email')
+      .populate('quiz')
+      .populate('assignment')
       .populate('teacher', 'name email');
 
     if (!session) {
@@ -166,6 +178,8 @@ const joinSession = async (req, res) => {
     const session = await MonitoringSession.findById(req.params.id)
       .populate('course', 'title')
       .populate('teacher', 'name email')
+      .populate('quiz')
+      .populate('assignment')
       .populate('enrolledStudents', '_id name email');
 
     if (!session) {
@@ -176,10 +190,14 @@ const joinSession = async (req, res) => {
       return res.status(400).json({ message: 'This session has already ended' });
     }
 
-    // Check student is enrolled
+    // Check student is enrolled (either in session snapshot OR in course dynamically)
+    const courseObj = await Course.findById(session.course._id || session.course);
+    const isEnrolledInCourse = courseObj && courseObj.studentsEnrolled.some(
+      sId => sId.toString() === req.user._id.toString()
+    );
     const isEnrolled = session.enrolledStudents.some(
       s => s._id.toString() === req.user._id.toString()
-    );
+    ) || isEnrolledInCourse;
     if (!isEnrolled) {
       return res.status(403).json({ message: 'You are not enrolled in the course for this session' });
     }
@@ -203,6 +221,8 @@ const joinSession = async (req, res) => {
       teacher: session.teacher,
       durationMinutes: session.durationMinutes,
       behavioralMonitoring: session.behavioralMonitoring,
+      quiz: session.quiz,
+      assignment: session.assignment,
       status: session.status,
       enrolledStudents: session.enrolledStudents,
     });

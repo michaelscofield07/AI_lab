@@ -52,8 +52,9 @@ const getQuizById = async (req, res) => {
     if (req.user.role === 'student') {
       const sanitizedQuestions = quiz.questions.map((q) => ({
         _id: q._id,
+        questionType: q.questionType || 'choice',
         questionText: q.questionText,
-        options: q.options,
+        options: q.options || [],
       }));
 
       return res.json({
@@ -74,11 +75,11 @@ const getQuizById = async (req, res) => {
 };
 
 // @desc    Submit quiz answers and score them
-// @route   POST /api/quizzes/:id/submit
+// @route   POST /api/quizzes/:id/submit (also /grade)
 // @access  Private (Student only)
 const submitQuiz = async (req, res) => {
   try {
-    const { answers } = req.body; // Array of { questionIndex: Number, selectedAnswerIndex: Number }
+    const { answers } = req.body; // Array of { questionIndex: Number, selectedAnswerIndex: Number, paragraphText: String }
     const quiz = await Quiz.findById(req.params.id);
 
     if (!quiz) {
@@ -90,10 +91,21 @@ const submitQuiz = async (req, res) => {
     }
 
     let correctCount = 0;
+    let choiceTotal = 0;
+
     const gradedAnswers = quiz.questions.map((question, idx) => {
-      // Find matching student answer
       const studentAns = answers.find((ans) => ans.questionIndex === idx);
-      const selectedAnswerIndex = studentAns ? studentAns.selectedAnswerIndex : -1;
+      
+      if (question.questionType === 'paragraph') {
+        return {
+          questionIndex: idx,
+          paragraphText: studentAns ? (studentAns.paragraphText || studentAns.text || '') : '',
+          isCorrect: true, // Paragraphs saved for manual teacher review & behavioral demo
+        };
+      }
+
+      choiceTotal++;
+      const selectedAnswerIndex = studentAns ? Number(studentAns.selectedOptionIndex ?? studentAns.selectedAnswerIndex) : -1;
       const isCorrect = selectedAnswerIndex === question.correctAnswerIndex;
 
       if (isCorrect) {
@@ -108,7 +120,8 @@ const submitQuiz = async (req, res) => {
     });
 
     const totalQuestions = quiz.questions.length;
-    const percentage = Math.round((correctCount / totalQuestions) * 100);
+    const denominator = choiceTotal > 0 ? choiceTotal : totalQuestions;
+    const percentage = Math.round((correctCount / denominator) * 100);
 
     const result = await Result.create({
       student: req.user._id,

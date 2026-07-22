@@ -22,6 +22,11 @@ const quizSchema = new mongoose.Schema(
     },
     questions: [
       {
+        questionType: {
+          type: String,
+          enum: ['choice', 'paragraph'],
+          default: 'choice',
+        },
         questionText: {
           type: String,
           required: true,
@@ -29,12 +34,11 @@ const quizSchema = new mongoose.Schema(
         options: [
           {
             type: String,
-            required: true,
           },
         ],
         correctAnswerIndex: {
           type: Number,
-          required: true,
+          default: 0,
         },
       },
     ],

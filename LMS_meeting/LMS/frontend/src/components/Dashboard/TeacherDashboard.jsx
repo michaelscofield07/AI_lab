@@ -257,13 +257,41 @@ const TeacherDashboard = () => {
     }
   };
 
+  const [sessionQuizId, setSessionQuizId] = useState('');
+  const [quizMode, setQuizMode] = useState('existing'); // 'existing' | 'new'
+  const [inlineQuestions, setInlineQuestions] = useState([
+    { questionType: 'choice', questionText: '', options: ['', '', '', ''], correctAnswerIndex: 0 },
+    { questionType: 'choice', questionText: '', options: ['', '', '', ''], correctAnswerIndex: 1 }
+  ]);
+
   const handleCreateSession = async (e) => {
     e.preventDefault();
     if (!sessionTitle || !sessionCourseId) {
       setError('Please provide a session title and select a course.');
       return;
     }
+
     try {
+      let finalQuizId = sessionQuizId;
+
+      if (quizMode === 'new') {
+        const chooseCount = inlineQuestions.filter(q => q.questionType === 'choice').length;
+        if (chooseCount < 2) {
+          setError('At least 2 Choose (Multiple Choice) questions are required for the assessment.');
+          return;
+        }
+
+        // Create new inline quiz for session
+        const quizRes = await axios.post('/api/quizzes', {
+          course: sessionCourseId,
+          title: `${sessionTitle} Quiz`,
+          description: 'Inline assessment for monitoring session',
+          durationMinutes: sessionDuration,
+          questions: inlineQuestions,
+        });
+        finalQuizId = quizRes.data._id;
+      }
+
       await axios.post('/api/sessions', {
         title: sessionTitle,
         course: sessionCourseId,
@@ -272,14 +300,19 @@ const TeacherDashboard = () => {
         blacklistedApps: sessionBlacklistedApps,
         blacklistedKeywords: sessionBlacklistedKeywords,
         behavioralMonitoring: sessionBehavioral,
+        quiz: finalQuizId || null,
       });
+
       setMessage('Monitoring session created successfully!');
       setSessionTitle('');
+      setSessionQuizId('');
+      setQuizMode('existing');
+      setInlineQuestions([
+        { questionType: 'choice', questionText: '', options: ['', '', '', ''], correctAnswerIndex: 0 },
+        { questionType: 'choice', questionText: '', options: ['', '', '', ''], correctAnswerIndex: 1 }
+      ]);
       setSessionDuration(60);
       setSessionPassword('');
-      setSessionBlacklistedApps('chrome, discord, vscode');
-      setSessionBlacklistedKeywords('chatgpt, stackoverflow, solution');
-      setSessionBehavioral(true);
       setShowSessionForm(false);
       fetchTeacherData();
       setTimeout(() => setMessage(''), 3000);
@@ -715,7 +748,12 @@ const TeacherDashboard = () => {
                         </>
                       )}
                       {s.status === 'ended' && (
-                        <span className="text-xs text-slate-400 font-semibold">Session completed</span>
+                        <button
+                          onClick={() => navigate(`/session/teacher/${s._id}`)}
+                          className="flex items-center gap-1 text-xs font-bold px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition-colors border border-slate-700"
+                        >
+                          <Eye size={12} /> View Audit Logs
+                        </button>
                       )}
                     </div>
                   </div>
@@ -1068,7 +1106,7 @@ const TeacherDashboard = () => {
       {/* Modal: Create Monitoring Session */}
       {showSessionForm && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 max-w-lg w-full rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl p-6 space-y-5 my-8">
+          <div className="bg-white dark:bg-slate-900 max-w-xl w-full rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-5 my-8 max-h-[85vh] overflow-y-auto">
             {/* Header */}
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-violet-50 dark:bg-violet-950/40 flex items-center justify-center text-violet-600 dark:text-violet-400">
@@ -1096,8 +1134,8 @@ const TeacherDashboard = () => {
                   required
                   value={sessionTitle}
                   onChange={(e) => setSessionTitle(e.target.value)}
-                  placeholder="Midterm Practical Exam — Batch A"
-                  className="w-full bg-slate-50 dark:bg-slate-850 border border-slate-250 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
+                  placeholder="e.g. Midterm Practical Exam — Batch A"
+                  className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
                 />
               </div>
 
@@ -1106,9 +1144,9 @@ const TeacherDashboard = () => {
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Link to Course</label>
                   <select
-                    value={sessionCourseId}
+                    value={sessionCourseId || courses[0]?._id || ''}
                     onChange={(e) => setSessionCourseId(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-slate-850 border border-slate-250 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
+                    className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
                   >
                     {courses.map(c => <option key={c._id} value={c._id}>{c.title} ({c.studentsEnrolled?.length || 0} students)</option>)}
                   </select>
@@ -1125,6 +1163,147 @@ const TeacherDashboard = () => {
                     className="w-full bg-slate-50 dark:bg-slate-850 border border-slate-250 dark:border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-violet-500/20 focus:border-violet-500"
                   />
                 </div>
+              </div>
+
+              {/* Session Quiz Setup Option */}
+              <div className="space-y-2 p-3.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Session Assessment Setup</label>
+                <div className="flex gap-4 text-xs font-semibold">
+                  <label className="flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-200">
+                    <input
+                      type="radio"
+                      name="quizMode"
+                      checked={quizMode === 'existing'}
+                      onChange={() => setQuizMode('existing')}
+                      className="text-violet-600 focus:ring-violet-500"
+                    />
+                    Select Course Quiz
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-200">
+                    <input
+                      type="radio"
+                      name="quizMode"
+                      checked={quizMode === 'new'}
+                      onChange={() => setQuizMode('new')}
+                      className="text-violet-600 focus:ring-violet-500"
+                    />
+                    + Create New Session Quiz
+                  </label>
+                </div>
+
+                {quizMode === 'existing' ? (
+                  <select
+                    value={sessionQuizId}
+                    onChange={(e) => setSessionQuizId(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none focus:border-violet-500 mt-2"
+                  >
+                    <option value="">No Quiz (Screen Monitoring Only)</option>
+                    {courses.find(c => c._id === sessionCourseId)?.quizzes?.map(q => (
+                      <option key={q._id} value={q._id}>{q.title}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="space-y-3 pt-2">
+                    <p className="text-[11px] text-slate-400">
+                      Minimum 2 Choose (Multiple Choice) questions required. Paragraph questions are optional:
+                    </p>
+                    {inlineQuestions.map((iq, idx) => (
+                      <div key={idx} className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg space-y-2 relative">
+                        {inlineQuestions.length > 2 && (
+                          <button
+                            type="button"
+                            onClick={() => setInlineQuestions(inlineQuestions.filter((_, i) => i !== idx))}
+                            className="absolute right-3 top-2 text-[10px] text-rose-500 hover:underline font-bold"
+                          >
+                            Remove
+                          </button>
+                        )}
+                        <div className="flex items-center justify-between text-xs pr-12">
+                          <span className="font-bold text-violet-400">Question {idx + 1}</span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                            iq.questionType === 'choice' ? 'bg-violet-500/20 text-violet-300' : 'bg-emerald-500/20 text-emerald-300'
+                          }`}>
+                            {iq.questionType === 'choice' ? 'Choose (Multiple Choice)' : 'Paragraph (Optional Essay)'}
+                          </span>
+                        </div>
+                        <input
+                          type="text"
+                          required
+                          value={iq.questionText}
+                          onChange={(e) => {
+                            const updated = [...inlineQuestions];
+                            updated[idx].questionText = e.target.value;
+                            setInlineQuestions(updated);
+                          }}
+                          placeholder={iq.questionType === 'paragraph' ? 'e.g. Write a brief essay response...' : 'e.g. What is the value of x?'}
+                          className="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-2.5 py-1.5 text-xs text-slate-900 dark:text-white"
+                        />
+                        {iq.questionType === 'choice' && (
+                          <div className="space-y-2 pt-1">
+                            <div className="grid grid-cols-2 gap-1.5">
+                              {iq.options.map((opt, oIdx) => (
+                                <input
+                                  key={oIdx}
+                                  type="text"
+                                  required
+                                  value={opt}
+                                  onChange={(e) => {
+                                    const updated = [...inlineQuestions];
+                                    updated[idx].options[oIdx] = e.target.value;
+                                    setInlineQuestions(updated);
+                                  }}
+                                  placeholder={`Choice ${oIdx + 1}`}
+                                  className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-[11px] text-slate-900 dark:text-white"
+                                />
+                              ))}
+                            </div>
+                            <div className="flex items-center gap-2 pt-1">
+                              <span className="text-[11px] font-bold text-emerald-500 dark:text-emerald-400">Correct Choice Key:</span>
+                              <select
+                                value={iq.correctAnswerIndex}
+                                onChange={(e) => {
+                                  const updated = [...inlineQuestions];
+                                  updated[idx].correctAnswerIndex = Number(e.target.value);
+                                  setInlineQuestions(updated);
+                                }}
+                                className="bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 rounded px-2 py-0.5 text-[11px] font-semibold"
+                              >
+                                {iq.options.map((opt, oIdx) => (
+                                  <option key={oIdx} value={oIdx}>
+                                    Choice {oIdx + 1}: {opt || `(Option ${oIdx + 1})`}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setInlineQuestions([
+                          ...inlineQuestions,
+                          { questionType: 'choice', questionText: '', options: ['', '', '', ''], correctAnswerIndex: 0 }
+                        ])}
+                        className="text-xs font-bold text-violet-500 hover:underline"
+                      >
+                        + Add Mandatory Choose Question
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInlineQuestions([
+                          ...inlineQuestions,
+                          { questionType: 'paragraph', questionText: '', options: [], correctAnswerIndex: 0 }
+                        ])}
+                        className="text-xs font-bold text-emerald-500 hover:underline"
+                      >
+                        + Add Optional Paragraph Question
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Session Password */}

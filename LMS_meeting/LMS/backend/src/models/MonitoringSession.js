@@ -24,6 +24,16 @@ const monitoringSessionSchema = new mongoose.Schema(
         ref: 'User',
       },
     ],
+    quiz: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Quiz',
+      default: null,
+    },
+    assignment: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Assignment',
+      default: null,
+    },
     durationMinutes: {
       type: Number,
       default: 60,

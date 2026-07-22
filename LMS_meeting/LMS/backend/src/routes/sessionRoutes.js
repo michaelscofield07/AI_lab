@@ -31,6 +31,12 @@ router.route('/:id/join')
 router.route('/:id/status')
   .patch(protect, authorize('teacher', 'admin'), updateSessionStatus);
 
+const { getStudentAuditLogs } = require('../controllers/auditController');
+
+// Get audit logs for a specific student
+router.route('/user/:studentId/audit-logs')
+  .get(protect, getStudentAuditLogs);
+
 // Nested audit log routes
 router.use('/:sessionId/audit-logs', require('./auditRoutes'));
 

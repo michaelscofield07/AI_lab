@@ -5,9 +5,10 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import {
   Monitor, MonitorOff, LogOut, Users, MessageSquare,
-  X, Send, AlertCircle, Wifi, WifiOff, Clock, Shield, AlertTriangle
+  X, Send, AlertCircle, Wifi, WifiOff, Clock, Shield,
+  FileText, CheckCircle2, ChevronRight, ChevronLeft, Award
 } from 'lucide-react';
-import { analyze5sSlotFrame } from '../utils/screenshotAnalyzer';
+import { analyze5sSlotFrame, compressCanvasFrame480p } from '../utils/screenshotAnalyzer';
 
 const TARGET_FPS = 5; // 5 frames per second — low bandwidth
 const FRAME_INTERVAL = 1000 / TARGET_FPS;
@@ -26,18 +27,23 @@ export default function StudentSessionView() {
   const [isSharing, setIsSharing] = useState(false);
   const [screenWarning, setScreenWarning] = useState(false);
 
-  // Participants
+  // Embedded Assessment / Quiz state
+  const [quizQuestions, setQuizQuestions] = useState([]);
+  const [currentQIndex, setCurrentQIndex] = useState(0);
+  const [selectedAnswers, setSelectedAnswers] = useState({});
+  const [quizSubmitted, setQuizSubmitted] = useState(false);
+  const [quizResult, setQuizResult] = useState(null);
+  const [submittingQuiz, setSubmittingQuiz] = useState(false);
+
+  // Participants & Chat
   const [participants, setParticipants] = useState([]);
   const [showParticipants, setShowParticipants] = useState(false);
-
-  // Chat (teacher only)
   const [showChat, setShowChat] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [teacherSocketId, setTeacherSocketId] = useState(null);
 
-  // Popup Warning State
-  const [popupWarning, setPopupWarning] = useState(null);
+  // Behavioral tracking
   const [behavioralScore, setBehavioralScore] = useState(25.0);
 
   // Refs
@@ -48,27 +54,47 @@ export default function StudentSessionView() {
   const slot5sIntervalRef = useRef(null);
   const chatEndRef = useRef(null);
 
-  // --- Load session info from localStorage (set during join) ---
+  // --- Load session info ---
   useEffect(() => {
-    const stored = localStorage.getItem(`session_${sessionId}`);
-    if (!stored) {
-      setErrorMsg('Session data not found. Please join again from the dashboard.');
-      setStatus('error');
-      return;
-    }
-    const info = JSON.parse(stored);
-    setSessionInfo(info);
-    connectSocket(info);
+    const fetchSessionData = async () => {
+      try {
+        const stored = localStorage.getItem(`session_${sessionId}`);
+        let info = stored ? JSON.parse(stored) : null;
+
+        // Fetch fresh session details from backend
+        const res = await axios.get(`/api/sessions/${sessionId}`).catch(() => null);
+        if (res?.data) {
+          info = res.data;
+        }
+
+        if (!info) {
+          setErrorMsg('Session data not found. Please join from the dashboard.');
+          setStatus('error');
+          return;
+        }
+
+        setSessionInfo(info);
+        if (info.quiz?.questions) {
+          setQuizQuestions(info.quiz.questions);
+        }
+
+        connectSocket(info);
+      } catch (err) {
+        setErrorMsg('Error loading monitoring session.');
+        setStatus('error');
+      }
+    };
+
+    fetchSessionData();
   }, [sessionId]);
 
-  // Scroll chat to bottom on new message
+  // Scroll chat to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMessages]);
 
   // --- Socket connection ---
   const connectSocket = (info) => {
-    // Empty string makes it use the current domain (e.g. ngrok), Vite proxies /socket.io to backend
     const socket = io('', {
       transports: ['websocket'],
       auth: { token },
@@ -94,12 +120,11 @@ export default function StudentSessionView() {
       setParticipants(list);
     });
 
-    // Teacher's socket ID sent from teacher view for private chat routing
     socket.on('teacher-socket-id', ({ socketId }) => {
       setTeacherSocketId(socketId);
     });
 
-    socket.on('chat-message', ({ fromSocketId, senderName, message, timestamp }) => {
+    socket.on('chat-message', ({ senderName, message, timestamp }) => {
       setChatMessages(prev => [...prev, {
         from: senderName,
         text: message,
@@ -107,10 +132,6 @@ export default function StudentSessionView() {
         self: false,
       }]);
       if (!showChat) setShowChat(true);
-    });
-
-    socket.on('popup-warning', (data) => {
-      setPopupWarning(data);
     });
 
     socket.on('session-ended', () => {
@@ -124,7 +145,62 @@ export default function StudentSessionView() {
     });
   };
 
-  // --- Screen capture: getDisplayMedia → canvas → binary blob → socket ---
+  // --- Continuous Behavioral Telemetry (Paste = Red + 480p Screenshot, Blur = Yellow) ---
+  useEffect(() => {
+    if (status !== 'joined' || !user) return;
+
+    const handleCopyPaste = (e) => {
+      let evidenceFrame = null;
+      if (canvasRef.current) {
+        evidenceFrame = compressCanvasFrame480p(canvasRef.current, 0.5);
+      }
+
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('anomaly-event', {
+          sessionId,
+          studentId: user._id,
+          studentName: user.name,
+          eventType: 'BEHAVIORAL_ANOMALY',
+          level: 'red',
+          isRed: true,
+          score: 85,
+          reason: 'Copy/Paste Detected (Ctrl+V)',
+          evidenceFrame, // Nearest 480p JPEG screenshot snapshot attached to Red log
+        });
+      }
+    };
+
+    const handleWindowBlur = () => {
+      let evidenceFrame = null;
+      if (canvasRef.current) {
+        evidenceFrame = compressCanvasFrame480p(canvasRef.current, 0.5);
+      }
+
+      if (socketRef.current?.connected) {
+        socketRef.current.emit('anomaly-event', {
+          sessionId,
+          studentId: user._id,
+          studentName: user.name,
+          eventType: 'BEHAVIORAL_ANOMALY',
+          level: 'red',
+          isRed: true,
+          score: 80,
+          reason: 'Tab Switch / Window Focus Lost',
+          evidenceFrame, // 480p JPEG screenshot snapshot attached to Red log
+        });
+      }
+    };
+
+    window.addEventListener('paste', handleCopyPaste);
+    window.addEventListener('blur', handleWindowBlur);
+
+    return () => {
+      window.removeEventListener('paste', handleCopyPaste);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [status, sessionId, user]);
+
+  // --- Screen capture & 5s slot frame diff engine ---
   const startScreenShare = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({
@@ -135,7 +211,6 @@ export default function StudentSessionView() {
       setIsSharing(true);
       setScreenWarning(false);
 
-      // Draw stream to hidden canvas and emit at TARGET_FPS
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       const video = document.createElement('video');
@@ -150,7 +225,6 @@ export default function StudentSessionView() {
       captureIntervalRef.current = setInterval(() => {
         if (video.readyState >= 2) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          // Binary blob — NO base64, avoids 33% overhead
           canvas.toBlob(
             (blob) => {
               if (!blob || !socketRef.current?.connected) return;
@@ -159,17 +233,16 @@ export default function StudentSessionView() {
               });
             },
             'image/jpeg',
-            0.5  // JPEG quality 50% — good balance for low FPS streaming
+            0.5
           );
         }
       }, FRAME_INTERVAL);
 
-      // --- 5-Second Slot Screenshot Frame Diff Analysis (Y / R score) ---
+      // 5-Second Screenshot Frame Difference Analysis
       slot5sIntervalRef.current = setInterval(() => {
         if (canvasRef.current && socketRef.current?.connected) {
           const res = analyze5sSlotFrame(canvasRef.current, behavioralScore);
           if (res && res.outputCode) {
-            console.log(`[5s Frame Diff Result] Code: ${res.outputCode} (Score: ${res.score}, Combined: ${res.combinedRisk})`);
             socketRef.current.emit('screenshot-analysis-result', {
               sessionId,
               studentId: user._id,
@@ -178,27 +251,17 @@ export default function StudentSessionView() {
               score: res.score,
               combinedRisk: res.combinedRisk,
               outputCode: res.outputCode,
-              evidenceFrame: res.evidenceFrame, // compressed base64 JPEG
+              evidenceFrame: res.evidenceFrame,
               reason: res.popupTriggered
-                ? 'Large visual change + behavioral flag'
+                ? 'Large visual change detected'
                 : `Noteworthy visual change (${res.outputCode})`,
               popupTriggered: res.popupTriggered,
             });
-
-            if (res.popupTriggered) {
-              setPopupWarning({
-                title: 'Visual Anomaly Alert',
-                message: 'Large sudden visual change detected in your exam session alongside behavioral indicators.',
-                outputCode: res.outputCode,
-                score: res.score,
-                combinedRisk: res.combinedRisk,
-              });
-            }
+            // Note: Logs & Red popups are processed by server.js and sent EXCLUSIVELY to Teacher UI.
           }
         }
-      }, 5000); // Frame taken every 5 seconds as input
+      }, 5000);
 
-      // Auto-stop if user cancels share via browser chrome
       stream.getVideoTracks()[0].addEventListener('ended', () => {
         stopScreenShare();
         setScreenWarning(true);
@@ -219,14 +282,12 @@ export default function StudentSessionView() {
     setIsSharing(false);
   }, []);
 
-  // Auto-prompt screen share when joined
   useEffect(() => {
     if (status === 'joined') {
-      setScreenWarning(true); // show warning first, let user click
+      setScreenWarning(true);
     }
   }, [status]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       stopScreenShare();
@@ -234,22 +295,84 @@ export default function StudentSessionView() {
     };
   }, []);
 
+  // --- Quiz Submission Handler ---
+  const handleQuizSubmit = async () => {
+    if (!sessionInfo?.quiz?._id) return;
+    try {
+      setSubmittingQuiz(true);
+      const answers = quizQuestions.map((q, idx) => {
+        const ans = selectedAnswers[idx];
+        if (q.questionType === 'paragraph') {
+          return {
+            questionIndex: idx,
+            paragraphText: typeof ans === 'string' ? ans : '',
+          };
+        }
+        return {
+          questionIndex: idx,
+          selectedOptionIndex: typeof ans === 'number' ? ans : -1,
+        };
+      });
+
+      const res = await axios.post(`/api/quizzes/${sessionInfo.quiz._id}/grade`, { answers });
+      const result = res.data.result || res.data;
+      setQuizResult(result);
+      setQuizSubmitted(true);
+
+      // Emit live results to teacher (choose answers + score only)
+      if (socketRef.current) {
+        const chooseAnswers = quizQuestions
+          .map((q, idx) => {
+            if (q.questionType !== 'choice') return null;
+            const selectedIdx = typeof selectedAnswers[idx] === 'number' ? selectedAnswers[idx] : -1;
+            const isCorrect = selectedIdx === q.correctAnswerIndex;
+            return {
+              questionIndex: idx,
+              questionText: q.questionText,
+              selectedOptionIndex: selectedIdx,
+              selectedOption: q.options?.[selectedIdx] ?? 'No Answer',
+              correctAnswerIndex: q.correctAnswerIndex,
+              correctOption: q.options?.[q.correctAnswerIndex] ?? '',
+              isCorrect,
+            };
+          })
+          .filter(Boolean);
+
+        socketRef.current.emit('quiz-submitted', {
+          sessionId,
+          studentId: user?._id || user?.id,
+          studentName: user?.name,
+          quizId: sessionInfo.quiz._id,
+          percentage: result?.percentage ?? 0,
+          score: result?.score ?? 0,
+          totalMarks: result?.totalMarks ?? 0,
+          chooseAnswers,
+        });
+      }
+
+      // Give a brief moment to show the result, then auto-leave
+      setTimeout(() => {
+        stopScreenShare();
+        socketRef.current?.disconnect();
+        localStorage.removeItem(`session_${sessionId}`);
+        navigate('/dashboard');
+      }, 2500);
+
+    } catch (err) {
+      console.error('Error submitting quiz assessment:', err);
+    } finally {
+      setSubmittingQuiz(false);
+    }
+  };
+
   const sendChat = () => {
     if (!chatInput.trim() || !socketRef.current) return;
-    const socket = socketRef.current;
-
-    // Find teacher's socket ID — teacher broadcasts their socket id on join
     if (!teacherSocketId) {
-      setChatMessages(prev => [...prev, {
-        from: 'System',
-        text: 'Teacher is not connected yet.',
-        time: '',
-        self: false,
-      }]);
+      setChatMessages(prev => [...prev, { from: 'System', text: 'Teacher is not connected yet.', self: false }]);
       return;
     }
 
-    socket.emit('chat-message', {
+    socketRef.current.emit('chat-message', {
       sessionId,
       toSocketId: teacherSocketId,
       message: chatInput.trim(),
@@ -272,7 +395,6 @@ export default function StudentSessionView() {
     navigate('/dashboard');
   };
 
-  // --- Render helpers ---
   if (status === 'error') {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -280,7 +402,7 @@ export default function StudentSessionView() {
           <AlertCircle size={40} className="mx-auto text-rose-500" />
           <h2 className="text-xl font-bold text-white">Connection Error</h2>
           <p className="text-slate-400 text-sm">{errorMsg}</p>
-          <button onClick={() => navigate('/dashboard')} className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-semibold">
+          <button onClick={() => navigate('/dashboard')} className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm font-semibold">
             Back to Dashboard
           </button>
         </div>
@@ -305,7 +427,6 @@ export default function StudentSessionView() {
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col">
-      {/* Hidden canvas for frame capture */}
       <canvas ref={canvasRef} className="hidden" />
 
       {/* Header */}
@@ -315,70 +436,33 @@ export default function StudentSessionView() {
             <Shield size={16} className="text-white" />
           </div>
           <div>
-            <h1 className="text-white font-bold text-sm">{sessionInfo?.title || 'Monitoring Session'}</h1>
+            <h1 className="text-white font-bold text-sm">{sessionInfo?.title || 'Live Assessment Session'}</h1>
             <p className="text-slate-400 text-xs">{sessionInfo?.course?.title}</p>
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs text-slate-400">
           {socketRef.current?.connected ? (
-            <span className="flex items-center gap-1 text-emerald-400"><Wifi size={12} /> Connected</span>
+            <span className="flex items-center gap-1 text-emerald-400"><Wifi size={12} /> Live Connected</span>
           ) : (
             <span className="flex items-center gap-1 text-rose-400"><WifiOff size={12} /> Reconnecting…</span>
           )}
           <Clock size={12} />
-          <span>{sessionInfo?.durationMinutes}m exam</span>
+          <span>{sessionInfo?.durationMinutes || 60}m session</span>
         </div>
       </div>
 
-      {/* Main area */}
-      <div className="flex-1 flex items-center justify-center relative">
-
-        {/* Anomaly Popup Warning Modal */}
-        {popupWarning && (
-          <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md flex items-center justify-center z-50">
-            <div className="bg-slate-900 rounded-2xl border border-rose-500/40 p-8 max-w-md text-center space-y-4 shadow-2xl animate-in fade-in zoom-in duration-200">
-              <div className="w-16 h-16 rounded-full bg-rose-500/20 border border-rose-500/30 flex items-center justify-center mx-auto text-rose-400">
-                <AlertTriangle size={36} />
-              </div>
-              <div className="space-y-1">
-                <span className="inline-block px-3 py-1 bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-mono font-bold rounded-full">
-                  CODE: {popupWarning.outputCode}
-                </span>
-                <h2 className="text-xl font-bold text-white mt-2">{popupWarning.title}</h2>
-              </div>
-              <p className="text-slate-300 text-sm leading-relaxed">
-                {popupWarning.message}
-              </p>
-              <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800 text-xs text-slate-400 flex justify-around">
-                <div>
-                  <span className="block text-slate-500 text-[10px] uppercase">Diff Score</span>
-                  <span className="text-amber-400 font-mono font-bold">{popupWarning.score}</span>
-                </div>
-                <div>
-                  <span className="block text-slate-500 text-[10px] uppercase">Combined Risk</span>
-                  <span className="text-rose-400 font-mono font-bold">{popupWarning.combinedRisk}</span>
-                </div>
-              </div>
-              <button
-                onClick={() => setPopupWarning(null)}
-                className="w-full py-3 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl transition-colors text-sm shadow-lg shadow-rose-900/30"
-              >
-                Acknowledge & Continue
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Screen share warning banner */}
+      {/* Main Workspace Area */}
+      <div className="flex-1 flex items-center justify-center relative p-6">
+        {/* Screen Share Warning Modal */}
         {screenWarning && (
           <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-sm flex items-center justify-center z-40">
             <div className="bg-slate-900 rounded-2xl border border-amber-500/30 p-8 max-w-sm text-center space-y-4 shadow-2xl">
               <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center mx-auto">
                 <MonitorOff size={32} className="text-amber-400" />
               </div>
-              <h2 className="text-white font-bold text-lg">Please Share Your Screen</h2>
+              <h2 className="text-white font-bold text-lg">Screen Sharing Required</h2>
               <p className="text-slate-400 text-sm">
-                This monitoring session requires you to share your screen. Your teacher will be able to view your screen during the exam.
+                Please share your screen to proceed with the live monitored assessment.
               </p>
               <button
                 onClick={startScreenShare}
@@ -391,31 +475,126 @@ export default function StudentSessionView() {
           </div>
         )}
 
-        {/* Screen sharing active status */}
-        {isSharing && !screenWarning && (
-          <div className="text-center space-y-4">
-            <div className="w-20 h-20 rounded-full bg-emerald-500/10 border-2 border-emerald-500/30 flex items-center justify-center mx-auto animate-pulse">
-              <Monitor size={36} className="text-emerald-400" />
+        {/* Embedded Assessment UI (Quiz linked to Session) */}
+        {sessionInfo?.quiz && quizQuestions.length > 0 ? (
+          <div className="w-full max-w-3xl bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div>
+                <span className="px-3 py-1 bg-violet-500/10 border border-violet-500/20 text-violet-400 text-xs font-semibold rounded-full">
+                  Live Assessment
+                </span>
+                <h2 className="text-xl font-bold text-white mt-1">{sessionInfo.quiz.title}</h2>
+              </div>
+              {!quizSubmitted && (
+                <div className="text-xs text-slate-400 font-mono">
+                  Question {currentQIndex + 1} of {quizQuestions.length}
+                </div>
+              )}
             </div>
-            <div>
-              <p className="text-white font-bold text-lg">Screen Sharing Active</p>
-              <p className="text-slate-400 text-sm mt-1">Your screen is visible to the teacher at 5 FPS</p>
-            </div>
-            <div className="flex items-center justify-center gap-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-emerald-400 text-xs font-semibold">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                LIVE
-              </span>
-            </div>
-          </div>
-        )}
 
-        {/* Not sharing, no warning — connecting state */}
-        {!isSharing && !screenWarning && status === 'connecting' && (
-          <div className="text-center">
-            <div className="w-10 h-10 border-4 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-slate-400">Connecting to session…</p>
+            {/* Quiz Submitted View */}
+            {quizSubmitted ? (
+              <div className="text-center py-8 space-y-4">
+                <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 rounded-full flex items-center justify-center mx-auto text-emerald-400">
+                  <Award size={36} />
+                </div>
+                <h3 className="text-2xl font-bold text-white">Assessment Submitted!</h3>
+                {quizResult && (
+                  <p className="text-slate-300 text-sm">
+                    Score: <span className="text-emerald-400 font-bold">{quizResult.score}%</span> ({quizResult.correctAnswers} / {quizResult.totalQuestions} correct)
+                  </p>
+                )}
+                <p className="text-slate-500 text-xs">Your answers have been submitted. Continue screen sharing until session finishes.</p>
+              </div>
+            ) : (
+              /* Question View */
+              <div className="space-y-6">
+                <div className="bg-slate-950/60 p-4 rounded-xl border border-slate-800 text-white font-medium text-base space-y-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="px-2 py-0.5 bg-violet-500/20 text-violet-300 border border-violet-500/30 text-[10px] uppercase font-bold rounded">
+                      {quizQuestions[currentQIndex]?.questionType === 'paragraph' ? 'Paragraph Response' : 'Multiple Choice'}
+                    </span>
+                  </div>
+                  <p>{quizQuestions[currentQIndex]?.questionText}</p>
+                </div>
+
+                {/* Choose (Multiple Choice) vs Paragraph (Textarea) */}
+                {quizQuestions[currentQIndex]?.questionType === 'paragraph' ? (
+                  <div className="space-y-2">
+                    <label className="text-xs text-slate-400 font-semibold">Your Answer / Essay Response:</label>
+                    <textarea
+                      rows={5}
+                      value={selectedAnswers[currentQIndex] || ''}
+                      onChange={(e) => setSelectedAnswers(prev => ({ ...prev, [currentQIndex]: e.target.value }))}
+                      placeholder="Type your response here... (Keystroke behavioral rhythm recorded)"
+                      className="w-full bg-slate-950/80 border border-slate-700 rounded-xl p-4 text-sm text-white focus:outline-none focus:border-violet-500 font-sans"
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {quizQuestions[currentQIndex]?.options?.map((opt, optIdx) => {
+                      const isSelected = selectedAnswers[currentQIndex] === optIdx;
+                      return (
+                        <button
+                          key={optIdx}
+                          onClick={() => setSelectedAnswers(prev => ({ ...prev, [currentQIndex]: optIdx }))}
+                          className={`w-full text-left p-4 rounded-xl border text-sm transition-all flex items-center justify-between ${
+                            isSelected
+                              ? 'bg-violet-600/20 border-violet-500 text-white shadow-lg'
+                              : 'bg-slate-800/40 border-slate-700/60 text-slate-300 hover:bg-slate-800 hover:text-white'
+                          }`}
+                        >
+                          <span>{opt}</span>
+                          {isSelected && <CheckCircle2 size={18} className="text-violet-400" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Navigation Toolbar */}
+                <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+                  <button
+                    disabled={currentQIndex === 0}
+                    onClick={() => setCurrentQIndex(prev => prev - 1)}
+                    className="px-4 py-2 bg-slate-800 disabled:opacity-40 text-slate-300 rounded-lg text-xs font-semibold flex items-center gap-1 hover:bg-slate-700"
+                  >
+                    <ChevronLeft size={16} /> Previous
+                  </button>
+
+                  {currentQIndex === quizQuestions.length - 1 ? (
+                    <button
+                      onClick={handleQuizSubmit}
+                      disabled={submittingQuiz}
+                      className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-lg transition-all"
+                    >
+                      {submittingQuiz ? 'Submitting…' : 'Submit Assessment'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => setCurrentQIndex(prev => prev + 1)}
+                      className="px-5 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1"
+                    >
+                      Next <ChevronRight size={16} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
+        ) : (
+          /* Default Active Session State (No Quiz attached) */
+          isSharing && !screenWarning && (
+            <div className="text-center space-y-4">
+              <div className="w-20 h-20 rounded-full bg-emerald-500/10 border-2 border-emerald-500/30 flex items-center justify-center mx-auto animate-pulse">
+                <Monitor size={36} className="text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-white font-bold text-lg">Active Monitoring Session</p>
+                <p className="text-slate-400 text-sm mt-1">Screen streaming at 5 FPS</p>
+              </div>
+            </div>
+          )
         )}
 
         {/* Participants Panel */}
@@ -428,7 +607,6 @@ export default function StudentSessionView() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
-              {/* Teacher */}
               <div className="flex items-center gap-2.5 p-2.5 rounded-xl bg-violet-500/10 border border-violet-500/20">
                 <div className="w-7 h-7 rounded-full bg-violet-600 flex items-center justify-center text-white text-xs font-bold">
                   T
@@ -438,7 +616,6 @@ export default function StudentSessionView() {
                   <p className="text-violet-400 text-[10px]">Teacher</p>
                 </div>
               </div>
-              {/* Other students (display only, no chat) */}
               {participants.map((p, i) => (
                 <div key={i} className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-800/50">
                   <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 text-xs font-bold">
@@ -451,7 +628,7 @@ export default function StudentSessionView() {
           </div>
         )}
 
-        {/* Chat Panel (teacher only) */}
+        {/* Chat Panel */}
         {showChat && (
           <div className="absolute right-4 top-4 bottom-20 w-72 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col z-30">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
@@ -462,7 +639,7 @@ export default function StudentSessionView() {
             </div>
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
               {chatMessages.length === 0 && (
-                <p className="text-slate-500 text-xs text-center py-6">No messages yet. Say hello to your teacher!</p>
+                <p className="text-slate-500 text-xs text-center py-6">No messages yet.</p>
               )}
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`flex ${msg.self ? 'justify-end' : 'justify-start'}`}>
@@ -488,10 +665,7 @@ export default function StudentSessionView() {
                 placeholder="Message teacher…"
                 className="flex-1 bg-slate-800 border border-slate-700 text-white text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-violet-500"
               />
-              <button
-                onClick={sendChat}
-                className="p-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors"
-              >
+              <button onClick={sendChat} className="p-2 bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition-colors">
                 <Send size={14} />
               </button>
             </div>
@@ -499,12 +673,10 @@ export default function StudentSessionView() {
         )}
       </div>
 
-      {/* Bottom toolbar — Google Meet style */}
+      {/* Bottom toolbar */}
       <div className="bg-slate-900 border-t border-slate-800 px-6 py-4 flex items-center justify-center gap-4">
-        {/* Screen Share Toggle */}
         <button
           onClick={isSharing ? stopScreenShare : startScreenShare}
-          title={isSharing ? 'Stop Sharing' : 'Share Screen'}
           className={`flex flex-col items-center gap-1.5 px-5 py-2.5 rounded-2xl transition-all ${
             isSharing
               ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/30'
@@ -512,13 +684,11 @@ export default function StudentSessionView() {
           }`}
         >
           {isSharing ? <Monitor size={22} /> : <MonitorOff size={22} />}
-          <span className="text-[10px] font-semibold">{isSharing ? 'Stop' : 'Share'}</span>
+          <span className="text-[10px] font-semibold">{isSharing ? 'Stop Share' : 'Share Screen'}</span>
         </button>
 
-        {/* Participants */}
         <button
           onClick={() => { setShowParticipants(p => !p); setShowChat(false); }}
-          title="Participants"
           className={`flex flex-col items-center gap-1.5 px-5 py-2.5 rounded-2xl border transition-all ${
             showParticipants
               ? 'bg-violet-500/20 text-violet-400 border-violet-500/30'
@@ -527,17 +697,10 @@ export default function StudentSessionView() {
         >
           <Users size={22} />
           <span className="text-[10px] font-semibold">People</span>
-          {participants.length > 0 && (
-            <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-violet-600 text-white text-[9px] flex items-center justify-center">
-              {participants.length}
-            </span>
-          )}
         </button>
 
-        {/* Chat */}
         <button
           onClick={() => { setShowChat(c => !c); setShowParticipants(false); }}
-          title="Chat with Teacher"
           className={`flex flex-col items-center gap-1.5 px-5 py-2.5 rounded-2xl border transition-all ${
             showChat
               ? 'bg-violet-500/20 text-violet-400 border-violet-500/30'
@@ -548,10 +711,8 @@ export default function StudentSessionView() {
           <span className="text-[10px] font-semibold">Chat</span>
         </button>
 
-        {/* Leave */}
         <button
           onClick={leaveSession}
-          title="Leave Session"
           className="flex flex-col items-center gap-1.5 px-5 py-2.5 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:bg-rose-500/30 transition-all"
         >
           <LogOut size={22} />
