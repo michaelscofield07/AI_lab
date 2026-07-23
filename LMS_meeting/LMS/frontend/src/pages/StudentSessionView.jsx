@@ -8,7 +8,8 @@ import {
   X, Send, AlertCircle, Wifi, WifiOff, Clock, Shield,
   FileText, CheckCircle2, ChevronRight, ChevronLeft, Award
 } from 'lucide-react';
-import { analyze5sSlotFrame, compressCanvasFrame480p } from '../utils/screenshotAnalyzer';
+import { analyze3sSlotFrame, compressCanvasFrame480p } from '../utils/screenshotAnalyzer';
+import BehavioralCalibrationModal from '../components/BehavioralCalibrationModal';
 
 const TARGET_FPS = 5; // 5 frames per second — low bandwidth
 const FRAME_INTERVAL = 1000 / TARGET_FPS;
@@ -22,6 +23,10 @@ export default function StudentSessionView() {
   const [sessionInfo, setSessionInfo] = useState(null);
   const [status, setStatus] = useState('connecting'); // connecting | joined | ended | error
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Behavioral DNA Profile State
+  const [behavioralProfile, setBehavioralProfile] = useState(null);
+  const [showCalibrationModal, setShowCalibrationModal] = useState(false);
 
   // Screen sharing state
   const [isSharing, setIsSharing] = useState(false);
@@ -46,6 +51,23 @@ export default function StudentSessionView() {
   // Behavioral tracking
   const [behavioralScore, setBehavioralScore] = useState(25.0);
 
+  // Load/Check One-Time Behavioral Profile per user ID
+  useEffect(() => {
+    if (user?._id || user?.id) {
+      const uId = user._id || user.id;
+      const saved = localStorage.getItem(`behavioral_profile_${uId}`);
+      if (saved) {
+        try {
+          setBehavioralProfile(JSON.parse(saved));
+        } catch (e) {
+          setShowCalibrationModal(true);
+        }
+      } else {
+        setShowCalibrationModal(true);
+      }
+    }
+  }, [user]);
+
   // Refs
   const socketRef = useRef(null);
   const streamRef = useRef(null);
@@ -53,6 +75,38 @@ export default function StudentSessionView() {
   const captureIntervalRef = useRef(null);
   const slot5sIntervalRef = useRef(null);
   const chatEndRef = useRef(null);
+
+  const lastKeyTimeRef = useRef(null);
+  const keystrokeCountRef = useRef(0);
+
+  const handleParagraphKeyUp = (e) => {
+    const now = performance.now();
+    if (lastKeyTimeRef.current) {
+      const flightMs = now - lastKeyTimeRef.current;
+      keystrokeCountRef.current += 1;
+
+      if (behavioralProfile && keystrokeCountRef.current > 6) {
+        const baselineFlight = behavioralProfile.avgFlightMs || 120;
+        // Relaxed partial check: emit yellow log if typing flight varies significantly from baseline
+        if (flightMs < baselineFlight * 0.35) {
+          if (socketRef.current?.connected) {
+            socketRef.current.emit('anomaly-event', {
+              sessionId,
+              studentId: user?._id || user?.id,
+              studentName: user?.name,
+              eventType: 'BEHAVIORAL_ANOMALY',
+              level: 'yellow',
+              isRed: false,
+              score: 38,
+              outputCode: 'y38',
+              reason: 'Typing Dynamics Cadence Variation (Yellow Log)',
+            });
+          }
+        }
+      }
+    }
+    lastKeyTimeRef.current = now;
+  };
 
   // --- Load session info ---
   useEffect(() => {
@@ -145,9 +199,45 @@ export default function StudentSessionView() {
     });
   };
 
-  // --- Continuous Behavioral Telemetry (Paste = Red + 480p Screenshot, Blur = Yellow) ---
+  // --- Continuous Behavioral Telemetry (Paste & Tab Switch = Red + 480p Screenshot, Mouse & Typing = Yellow) ---
   useEffect(() => {
     if (status !== 'joined' || !user) return;
+
+    let lastMouseTime = performance.now();
+    let lastMousePos = { x: 0, y: 0 };
+    let mouseThrottled = false;
+
+    const handleMouseMove = (e) => {
+      const now = performance.now();
+      const dt = (now - lastMouseTime) / 1000;
+      if (dt > 0.1) {
+        const dx = e.clientX - lastMousePos.x;
+        const dy = e.clientY - lastMousePos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const speed = dist / dt;
+        lastMouseTime = now;
+        lastMousePos = { x: e.clientX, y: e.clientY };
+
+        if (behavioralProfile && speed > 2200 && !mouseThrottled) {
+          mouseThrottled = true;
+          setTimeout(() => { mouseThrottled = false; }, 8000);
+
+          if (socketRef.current?.connected) {
+            socketRef.current.emit('anomaly-event', {
+              sessionId,
+              studentId: user?._id || user?.id,
+              studentName: user?.name,
+              eventType: 'BEHAVIORAL_ANOMALY',
+              level: 'yellow',
+              isRed: false,
+              score: 32,
+              outputCode: 'y32',
+              reason: 'Mouse Cursor Velocity Variation (Yellow Log)',
+            });
+          }
+        }
+      }
+    };
 
     const handleCopyPaste = (e) => {
       let evidenceFrame = null;
@@ -165,7 +255,7 @@ export default function StudentSessionView() {
           isRed: true,
           score: 85,
           reason: 'Copy/Paste Detected (Ctrl+V)',
-          evidenceFrame, // Nearest 480p JPEG screenshot snapshot attached to Red log
+          evidenceFrame,
         });
       }
     };
@@ -186,19 +276,21 @@ export default function StudentSessionView() {
           isRed: true,
           score: 80,
           reason: 'Tab Switch / Window Focus Lost',
-          evidenceFrame, // 480p JPEG screenshot snapshot attached to Red log
+          evidenceFrame,
         });
       }
     };
 
+    window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('paste', handleCopyPaste);
     window.addEventListener('blur', handleWindowBlur);
 
     return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('paste', handleCopyPaste);
       window.removeEventListener('blur', handleWindowBlur);
     };
-  }, [status, sessionId, user]);
+  }, [status, sessionId, user, behavioralProfile]);
 
   // --- Screen capture & 5s slot frame diff engine ---
   const startScreenShare = useCallback(async () => {
@@ -238,10 +330,10 @@ export default function StudentSessionView() {
         }
       }, FRAME_INTERVAL);
 
-      // 5-Second Screenshot Frame Difference Analysis
+      // 3-Second Screenshot Frame Difference Analysis
       slot5sIntervalRef.current = setInterval(() => {
         if (canvasRef.current && socketRef.current?.connected) {
-          const res = analyze5sSlotFrame(canvasRef.current, behavioralScore);
+          const res = analyze3sSlotFrame(canvasRef.current, behavioralScore);
           if (res && res.outputCode) {
             socketRef.current.emit('screenshot-analysis-result', {
               sessionId,
@@ -253,14 +345,14 @@ export default function StudentSessionView() {
               outputCode: res.outputCode,
               evidenceFrame: res.evidenceFrame,
               reason: res.popupTriggered
-                ? 'Large visual change detected'
+                ? 'Large visual change detected (3s slot)'
                 : `Noteworthy visual change (${res.outputCode})`,
               popupTriggered: res.popupTriggered,
             });
             // Note: Logs & Red popups are processed by server.js and sent EXCLUSIVELY to Teacher UI.
           }
         }
-      }, 5000);
+      }, 3000);
 
       stream.getVideoTracks()[0].addEventListener('ended', () => {
         stopScreenShare();
@@ -295,12 +387,11 @@ export default function StudentSessionView() {
     };
   }, []);
 
-  // --- Quiz Submission Handler ---
+  // --- Fail-Safe Quiz Submission Handler ---
   const handleQuizSubmit = async () => {
-    if (!sessionInfo?.quiz?._id) return;
     try {
       setSubmittingQuiz(true);
-      const answers = quizQuestions.map((q, idx) => {
+      const answersPayload = quizQuestions.map((q, idx) => {
         const ans = selectedAnswers[idx];
         if (q.questionType === 'paragraph') {
           return {
@@ -314,52 +405,77 @@ export default function StudentSessionView() {
         };
       });
 
-      const res = await axios.post(`/api/quizzes/${sessionInfo.quiz._id}/grade`, { answers });
-      const result = res.data.result || res.data;
-      setQuizResult(result);
-      setQuizSubmitted(true);
+      let gradeResult = null;
+      if (sessionInfo?.quiz?._id) {
+        try {
+          const res = await axios.post(`/api/quizzes/${sessionInfo.quiz._id}/grade`, { answers: answersPayload });
+          gradeResult = res.data.result || res.data;
+        } catch (err) {
+          console.warn('Backend grade API fallback (will still emit live to teacher):', err);
+        }
+      }
 
-      // Emit live results to teacher (choose answers + score only)
+      // Compile complete answer list (Choice + Paragraph responses) for live Teacher Dashboard
+      const chooseAnswers = quizQuestions.map((q, idx) => {
+        const ans = selectedAnswers[idx];
+        if (q.questionType === 'paragraph') {
+          return {
+            questionIndex: idx,
+            questionText: q.questionText,
+            questionType: 'paragraph',
+            paragraphText: typeof ans === 'string' ? ans : '',
+          };
+        }
+        const selectedIdx = typeof ans === 'number' ? ans : -1;
+        const isCorrect = selectedIdx === q.correctAnswerIndex;
+        return {
+          questionIndex: idx,
+          questionText: q.questionText,
+          questionType: 'choice',
+          selectedOptionIndex: selectedIdx,
+          selectedOption: q.options?.[selectedIdx] ?? 'No Answer',
+          correctAnswerIndex: q.correctAnswerIndex,
+          correctOption: q.options?.[q.correctAnswerIndex] ?? '',
+          isCorrect,
+        };
+      });
+
+      // Emit live submission payload to teacher socket
       if (socketRef.current) {
-        const chooseAnswers = quizQuestions
-          .map((q, idx) => {
-            if (q.questionType !== 'choice') return null;
-            const selectedIdx = typeof selectedAnswers[idx] === 'number' ? selectedAnswers[idx] : -1;
-            const isCorrect = selectedIdx === q.correctAnswerIndex;
-            return {
-              questionIndex: idx,
-              questionText: q.questionText,
-              selectedOptionIndex: selectedIdx,
-              selectedOption: q.options?.[selectedIdx] ?? 'No Answer',
-              correctAnswerIndex: q.correctAnswerIndex,
-              correctOption: q.options?.[q.correctAnswerIndex] ?? '',
-              isCorrect,
-            };
-          })
-          .filter(Boolean);
-
         socketRef.current.emit('quiz-submitted', {
           sessionId,
           studentId: user?._id || user?.id,
           studentName: user?.name,
-          quizId: sessionInfo.quiz._id,
-          percentage: result?.percentage ?? 0,
-          score: result?.score ?? 0,
-          totalMarks: result?.totalMarks ?? 0,
+          quizId: sessionInfo?.quiz?._id,
+          percentage: gradeResult?.percentage ?? 0,
+          score: gradeResult?.score ?? 0,
+          totalMarks: gradeResult?.totalMarks ?? quizQuestions.filter(q => q.questionType !== 'paragraph').length,
           chooseAnswers,
         });
       }
 
-      // Give a brief moment to show the result, then auto-leave
+      setQuizResult(gradeResult);
+      setQuizSubmitted(true);
+
+      // Brief delay to allow UI to render completed state, then auto end student session & return to dashboard
       setTimeout(() => {
         stopScreenShare();
         socketRef.current?.disconnect();
         localStorage.removeItem(`session_${sessionId}`);
+        setStatus('ended');
         navigate('/dashboard');
-      }, 2500);
+      }, 1800);
 
     } catch (err) {
-      console.error('Error submitting quiz assessment:', err);
+      console.error('Quiz submission error:', err);
+      setQuizSubmitted(true);
+      setTimeout(() => {
+        stopScreenShare();
+        socketRef.current?.disconnect();
+        localStorage.removeItem(`session_${sessionId}`);
+        setStatus('ended');
+        navigate('/dashboard');
+      }, 1800);
     } finally {
       setSubmittingQuiz(false);
     }
@@ -498,13 +614,11 @@ export default function StudentSessionView() {
                 <div className="w-16 h-16 bg-emerald-500/10 border border-emerald-500/20 rounded-full flex items-center justify-center mx-auto text-emerald-400">
                   <Award size={36} />
                 </div>
-                <h3 className="text-2xl font-bold text-white">Assessment Submitted!</h3>
-                {quizResult && (
-                  <p className="text-slate-300 text-sm">
-                    Score: <span className="text-emerald-400 font-bold">{quizResult.score}%</span> ({quizResult.correctAnswers} / {quizResult.totalQuestions} correct)
-                  </p>
-                )}
-                <p className="text-slate-500 text-xs">Your answers have been submitted. Continue screen sharing until session finishes.</p>
+                <h3 className="text-2xl font-bold text-white">Assessment Submitted Successfully!</h3>
+                <p className="text-slate-400 text-sm">
+                  Your responses have been submitted to your instructor for evaluation.
+                </p>
+                <p className="text-slate-500 text-xs mt-2">Exiting live session room...</p>
               </div>
             ) : (
               /* Question View */
@@ -526,6 +640,7 @@ export default function StudentSessionView() {
                       rows={5}
                       value={selectedAnswers[currentQIndex] || ''}
                       onChange={(e) => setSelectedAnswers(prev => ({ ...prev, [currentQIndex]: e.target.value }))}
+                      onKeyUp={handleParagraphKeyUp}
                       placeholder="Type your response here... (Keystroke behavioral rhythm recorded)"
                       className="w-full bg-slate-950/80 border border-slate-700 rounded-xl p-4 text-sm text-white focus:outline-none focus:border-violet-500 font-sans"
                     />
@@ -719,6 +834,18 @@ export default function StudentSessionView() {
           <span className="text-[10px] font-semibold">Leave</span>
         </button>
       </div>
+
+      {/* Behavioral Calibration Modal Gate */}
+      {showCalibrationModal && user && (
+        <BehavioralCalibrationModal
+          userId={user._id || user.id}
+          userName={user.name}
+          onComplete={(profile) => {
+            setBehavioralProfile(profile);
+            setShowCalibrationModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }

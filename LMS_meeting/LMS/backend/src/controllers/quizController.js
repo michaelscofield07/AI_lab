@@ -133,8 +133,11 @@ const submitQuiz = async (req, res) => {
     });
 
     res.status(201).json({
-      result,
-      correctAnswers: quiz.questions.map((q) => q.correctAnswerIndex), // Return correct keys to let student see their results page
+      result: {
+        ...result.toObject(),
+        totalMarks: choiceTotal > 0 ? choiceTotal : totalQuestions,
+      },
+      correctAnswers: quiz.questions.map((q) => q.correctAnswerIndex),
     });
   } catch (error) {
     console.error(error);

@@ -1,6 +1,6 @@
 /**
  * Screenshot Frame Difference Anomaly Analyzer (JS / Canvas implementation)
- * Operates on 5-second screenshot intervals.
+ * Operates on 3-second screenshot intervals.
  * Evaluates frame difference (160x90 grayscale), assigns y<score> or r<score>,
  * compresses evidence images, and sends to LMS audit logs.
  */
@@ -71,12 +71,12 @@ export function compressCanvasFrame480p(canvas, quality = 0.5) {
 }
 
 /**
- * Processes 5s slot screenshot frame
+ * Processes 3s slot screenshot frame
  * @param {HTMLCanvasElement} currentCanvas 
  * @param {number} behavioralCurrentScore 
  * @returns {object|null} Result with outputCode ('y<score>' | 'r<score>'), evidence frame, combinedRisk, eventType
  */
-export function analyze5sSlotFrame(currentCanvas, behavioralCurrentScore = 0) {
+export function analyze3sSlotFrame(currentCanvas, behavioralCurrentScore = 0) {
   const currentGray = getGrayscalePixels(currentCanvas);
   
   if (!previousFrameData) {
@@ -137,3 +137,5 @@ export function analyze5sSlotFrame(currentCanvas, behavioralCurrentScore = 0) {
 export function resetFrameBuffer() {
   previousFrameData = null;
 }
+
+export const analyze5sSlotFrame = analyze3sSlotFrame;

@@ -547,35 +547,53 @@ export default function TeacherSessionView() {
                           </span>
                         </div>
 
-                        {/* Choose (Auto-Graded) Answers */}
+                        {/* Answers Breakdown (Multiple Choice + Paragraph Responses) */}
                         {studentAnswers[focusedStudent.sId].chooseAnswers?.length > 0 && (
                           <div className="space-y-2">
-                            <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Multiple Choice Answers:</h4>
-                            {studentAnswers[focusedStudent.sId].chooseAnswers.map((ans, idx) => (
-                              <div key={idx} className={`p-3 rounded-xl border space-y-1 ${
-                                ans.isCorrect ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-rose-500/10 border-rose-500/30'
-                              }`}>
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[10px] font-bold text-violet-400">Q{ans.questionIndex + 1}</span>
-                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
-                                    ans.isCorrect
-                                      ? 'bg-emerald-500/20 text-emerald-300'
-                                      : 'bg-rose-500/20 text-rose-300'
-                                  }`}>
-                                    {ans.isCorrect ? '✓ Correct' : '✗ Incorrect'}
-                                  </span>
-                                </div>
-                                <p className="text-xs text-slate-200 font-medium">{ans.questionText}</p>
-                                <p className="text-[11px] text-slate-400">
-                                  Selected: <span className="font-bold text-white">{ans.selectedOption || 'No Answer'}</span>
-                                </p>
-                                {!ans.isCorrect && (
-                                  <p className="text-[11px] text-emerald-400">
-                                    Correct: <span className="font-bold">{ans.correctOption}</span>
+                            <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Submitted Answers & Responses:</h4>
+                            {studentAnswers[focusedStudent.sId].chooseAnswers.map((ans, idx) => {
+                              if (ans.questionType === 'paragraph') {
+                                return (
+                                  <div key={idx} className="p-3 rounded-xl border border-slate-700 bg-slate-800/40 space-y-1.5">
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-[10px] font-bold text-violet-400">Q{ans.questionIndex + 1} (Paragraph Response)</span>
+                                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-violet-500/20 text-violet-300 border border-violet-500/30">
+                                        Keystroke Logged
+                                      </span>
+                                    </div>
+                                    <p className="text-xs text-slate-200 font-medium">{ans.questionText}</p>
+                                    <div className="p-2.5 bg-slate-950/80 rounded-lg border border-slate-800 text-xs text-slate-300 font-sans italic">
+                                      "{ans.paragraphText || '(No paragraph text submitted)'}"
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div key={idx} className={`p-3 rounded-xl border space-y-1 ${
+                                  ans.isCorrect ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-rose-500/10 border-rose-500/30'
+                                }`}>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-[10px] font-bold text-violet-400">Q{ans.questionIndex + 1}</span>
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                                      ans.isCorrect
+                                        ? 'bg-emerald-500/20 text-emerald-300'
+                                        : 'bg-rose-500/20 text-rose-300'
+                                    }`}>
+                                      {ans.isCorrect ? '✓ Correct' : '✗ Incorrect'}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-slate-200 font-medium">{ans.questionText}</p>
+                                  <p className="text-[11px] text-slate-400">
+                                    Selected: <span className="font-bold text-white">{ans.selectedOption || 'No Answer'}</span>
                                   </p>
-                                )}
-                              </div>
-                            ))}
+                                  {!ans.isCorrect && (
+                                    <p className="text-[11px] text-emerald-400">
+                                      Correct: <span className="font-bold">{ans.correctOption}</span>
+                                    </p>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
@@ -667,63 +685,80 @@ export default function TeacherSessionView() {
         </div>
       )}
 
-      {/* Anomaly History panel */}
+      {/* Anomaly History panel (Grouped by Student ID — 1 box per user) */}
       {showAnomalies && (
         <div className="fixed right-4 top-16 bottom-24 w-80 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl flex flex-col z-30">
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
-            <h3 className="text-white font-bold text-sm">Session Anomaly Logs ({anomalies.length})</h3>
+            <h3 className="text-white font-bold text-sm">Session Anomaly Summary</h3>
             <button onClick={() => setShowAnomalies(false)} className="text-slate-400 hover:text-white">
               <X size={16} />
             </button>
           </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
             {anomalies.length === 0 ? (
               <p className="text-slate-500 text-xs text-center py-6">No anomalies logged yet</p>
             ) : (
-              anomalies.map(a => (
-                <div
-                  key={a.id}
-                  onClick={() => focusOnStudent(a.studentId, a.studentName)}
-                  className={`p-3 rounded-xl border cursor-pointer hover:border-violet-500/60 transition-all ${
-                    a.outputCode?.startsWith('r') 
-                      ? 'bg-rose-500/10 border-rose-500/30' 
-                      : 'bg-amber-500/10 border-amber-500/30'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="text-white text-xs font-bold flex items-center gap-1">
-                      <Maximize2 size={11} className="text-violet-400" />
-                      {a.studentName}
-                    </p>
-                    {a.outputCode && (
-                      <span className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded-md ${
-                        a.outputCode.startsWith('r')
-                          ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                      }`}>
-                        {a.outputCode}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-slate-300 text-xs mt-1">{a.reason}</p>
-                  
-                  {a.evidenceFrame && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedEvidenceFrame(a.evidenceFrame);
-                      }}
-                      className="mt-2 text-[10px] text-violet-400 hover:text-violet-300 font-semibold flex items-center gap-1"
-                    >
-                      <Eye size={12} /> View 480p Screenshot Evidence
-                    </button>
-                  )}
+              (() => {
+                const groupMap = {};
+                anomalies.forEach((a) => {
+                  const sId = a.studentId || 'unknown';
+                  if (!groupMap[sId]) {
+                    groupMap[sId] = {
+                      studentId: sId,
+                      studentName: a.studentName || 'Student',
+                      logs: [],
+                      redCount: 0,
+                      yellowCount: 0,
+                      latestLog: a,
+                    };
+                  }
+                  groupMap[sId].logs.push(a);
+                  if (a.outputCode?.startsWith('r')) groupMap[sId].redCount += 1;
+                  else groupMap[sId].yellowCount += 1;
+                  groupMap[sId].latestLog = a;
+                });
 
-                  <p className="text-slate-500 text-[10px] mt-1.5 text-right">
-                    {a.timestamp || new Date().toLocaleTimeString()}
-                  </p>
-                </div>
-              ))
+                const groupedList = Object.values(groupMap);
+
+                return groupedList.map(group => (
+                  <div
+                    key={group.studentId}
+                    onClick={() => {
+                      focusOnStudent(group.studentId, group.studentName);
+                      setStudentTab('anomalies');
+                    }}
+                    className="p-3.5 bg-slate-950/60 border border-slate-800 hover:border-violet-500/60 rounded-2xl cursor-pointer transition-all space-y-2 group shadow-md"
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-white text-xs font-bold flex items-center gap-1.5 group-hover:text-violet-300">
+                        <Maximize2 size={12} className="text-violet-400" />
+                        {group.studentName}
+                      </p>
+                      <span className="text-[10px] font-semibold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full">
+                        {group.logs.length} Log{group.logs.length > 1 ? 's' : ''}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      {group.redCount > 0 && (
+                        <span className="px-2 py-0.5 bg-rose-500/20 text-rose-300 border border-rose-500/30 text-[10px] font-bold rounded-md">
+                          {group.redCount} RED
+                        </span>
+                      )}
+                      {group.yellowCount > 0 && (
+                        <span className="px-2 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold rounded-md">
+                          {group.yellowCount} YELLOW
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-800/80 text-[11px] text-slate-400 flex items-center justify-between">
+                      <span className="truncate max-w-[170px] text-slate-300">Latest: {group.latestLog.reason}</span>
+                      <span className="text-[10px] text-violet-400 font-semibold group-hover:underline">Logs →</span>
+                    </div>
+                  </div>
+                ));
+              })()
             )}
           </div>
         </div>
